@@ -95,6 +95,46 @@ import {
 } from "./simulator/weather.js";
 import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from "./simulator/scenarios.js";
 import {
+  airportApproachGeometry,
+  alternateRunwayConfig,
+  alternateRunwayPoint,
+  finalGeometryRunway,
+  ilsBoundaryLines,
+  runwayPointEnv,
+  runwayPointForRunway,
+  runwayPolygonPoints,
+} from "./simulator/runwayGeometry.js";
+import {
+  buildFinalAircraft,
+  buildRadarContact,
+  buildRouteAircraft,
+  makeAircraft,
+  makeEmptyAircraft,
+  makeRandomArrival,
+  randomType,
+} from "./simulator/aircraftFactory.js";
+import {
+  adizEscortComplete,
+  adizRectCorners,
+  distanceFromAdizCenterNm,
+  foxhoundAdizArea,
+  foxhoundDeepPenetration,
+  foxhoundEscortPatch,
+  isFoxhound,
+  isScenario05InterceptPair,
+  pointInAdizRect,
+  scenario05InterceptPlan,
+} from "./simulator/interceptScenario.js";
+import {
+  holdPatternPoints,
+  makeNavCached,
+  makeRoutes,
+  makeSids,
+  suggestHoldForBearing,
+  suggestRouteForBearing,
+  wp,
+} from "./simulator/airspaceRoutes.js";
+import {
   resolveAlternateTargetState,
   resolveDepartureGroundTargetState,
   resolveDepartureTargetState,
@@ -123,69 +163,6 @@ import {
 const WAKE_ASSESSMENT_DEPS = { approachRunwayForAircraft };
 const SEQUENCING_DEPS = { approachRunwayForAircraft, makeNavCached, wp };
 
-function airportApproachGeometry(airportId, ac) {
-  const ap = AIRPORTS.find((a) => a.id === airportId);
-  if (!ap) return null;
-  const rw = ac?.alternateRunway || (airportId === "RJCH" ? "12" : "RWY");
-  const course = airportId === "RJCH" ? 120 : airportId === "RJSM" ? 100 : 180;
-  const geo = finalGeometryAt({ x: ap.x, y: ap.y }, course, ac.x, ac.y);
-  return { airport: ap, runway: rw, course, geo };
-}
-function alternateRunwayConfig(airportId, wind = null) {
-  const candidates = AIRPORT_RUNWAYS[airportId] || AIRPORT_RUNWAYS.RJCH;
-  const picked = wind ? candidates.reduce((best, r) => runwayHeadwind(wind, r.course) > runwayHeadwind(wind, best.course) ? r : best, candidates[0]) : candidates[0];
-  return { airportId, runwayName: picked.name, course: picked.course };
-}
-function alternateRunwayPoint(airportId, dme, wind = null) {
-  const ap = AIRPORTS.find((a) => a.id === airportId);
-  const cfg = alternateRunwayConfig(airportId, wind);
-  return ap ? runwayPointAt({ x: ap.x, y: ap.y }, cfg.course, dme) : { x: CENTER, y: CENTER };
-}
-function runwayPointForRunway(runwayName, dme) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const origin = runwayOrigin(rw);
-  const v = hdgVector(rw.course);
-  return { x: origin.x - v.x * dme * PX_PER_NM, y: origin.y - v.y * dme * PX_PER_NM };
-}
-function runwayPolygonPoints(runwayName, centerX = CENTER, centerY = CENTER, scale = 1, lenNm = RJCC_RUNWAY_VISUAL_NM, halfWidth = 4) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const origin = runwayOrigin(rw);
-  const v = hdgVector(rw.course);
-  const r = { x: -v.y, y: v.x };
-  const len = lenNm * PX_PER_NM * scale;
-  const offX = (origin.x - CENTER) * scale;
-  const offY = (origin.y - CENTER) * scale;
-  const cx = centerX + offX;
-  const cy = centerY + offY;
-  return [
-    { x: cx - v.x * len + r.x * halfWidth, y: cy - v.y * len + r.y * halfWidth },
-    { x: cx + v.x * len + r.x * halfWidth, y: cy + v.y * len + r.y * halfWidth },
-    { x: cx + v.x * len - r.x * halfWidth, y: cy + v.y * len - r.y * halfWidth },
-    { x: cx - v.x * len - r.x * halfWidth, y: cy - v.y * len - r.y * halfWidth },
-  ];
-}
-function ilsTrapPoints(origin, course, nearNm = 0, farNm = 18, nearHalfPx = ILS_NEAR_PX, farHalfPx = ILS_FAR_PX) {
-  const v = hdgVector(course);
-  const r = { x: -v.y, y: v.x };
-  const near = runwayPointAt(origin, course, nearNm);
-  const far = runwayPointAt(origin, course, farNm);
-  const leftNear = { x: near.x + r.x * nearHalfPx, y: near.y + r.y * nearHalfPx };
-  const leftFar = { x: far.x + r.x * farHalfPx, y: far.y + r.y * farHalfPx };
-  const rightFar = { x: far.x - r.x * farHalfPx, y: far.y - r.y * farHalfPx };
-  const rightNear = { x: near.x - r.x * nearHalfPx, y: near.y - r.y * nearHalfPx };
-  return [leftNear, leftFar, rightFar, rightNear];
-}
-function ilsBoundaryLines(origin, course, nearNm = 0, farNm = 18, nearHalfPx = ILS_NEAR_PX, farHalfPx = ILS_FAR_PX) {
-  const pts = ilsTrapPoints(origin, course, nearNm, farNm, nearHalfPx, farHalfPx);
-  return {
-    polygon: pts,
-    left: [pts[0], pts[1]],
-    right: [pts[3], pts[2]],
-    center: [runwayPointAt(origin, course, nearNm), runwayPointAt(origin, course, farNm)],
-  };
-}
-function runwayPointEnv(env, dme) { return runwayPointForRunway(env.runway.name, dme); }
-function finalGeometryRunway(env, x, y) { return finalGeometryAt(runwayOrigin(env.runway), env.runway.course, x, y); }
 function nearestMissionAreaAhead(ac, heading) {
   if (!ac.avoidMissionAreas) return null;
   if (ac.category === "MIL" || isApproachMode(ac.mode) || ac.mode === "HOLD" || isAlternateMode(ac.mode)) return null;
@@ -256,193 +233,6 @@ function militaryRtbPatch(ac, env) {
   };
 }
 
-function makeNav(runwayName) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const pair = runwayPairName(runwayName);
-  const course = rw.course;
-  const origin = runwayOrigin(rw);
-  const opposite = normHeading(course + 180);
-  const eastDownwindBearing = pair === "19" ? normHeading(opposite + 62) : normHeading(opposite - 62);
-  const westDownwindBearing = pair === "19" ? normHeading(opposite - 62) : normHeading(opposite + 62);
-  const eastBaseBearing = pair === "19" ? normHeading(opposite + 40) : normHeading(opposite - 40);
-  const westBaseBearing = pair === "19" ? normHeading(opposite - 40) : normHeading(opposite + 40);
-  const rel = (bearing, rangeNm) => {
-    const v = hdgVector(bearing);
-    return { x: origin.x + v.x * rangeNm * PX_PER_NM, y: origin.y + v.y * rangeNm * PX_PER_NM };
-  };
-  const rwy = (dme) => runwayPointForRunway(rw.name, dme);
-  return [
-    { id: "CHITOSE", x: origin.x, y: origin.y, label: "RJCC" },
-    { id: "FAF", ...rwy(7), label: "FAF" },
-    { id: "IF01", ...rwy(14), label: "IF01" },
-    { id: "IAF_N", ...rel(350, 44), label: "IAF_N" },
-    { id: "IAF_E", ...rel(70, 44), label: "IAF_E" },
-    { id: "IAF_W", ...rel(285, 44), label: "IAF_W" },
-    { id: "IAF_S", ...rel(180, 46), label: "IAF_S" },
-    { id: "DW_E", ...rel(eastDownwindBearing, 18), label: "DW_E" },
-    { id: "DW_W", ...rel(westDownwindBearing, 18), label: "DW_W" },
-    { id: "BASE_E", ...rel(eastBaseBearing, 17), label: "BASE_E" },
-    { id: "BASE_W", ...rel(westBaseBearing, 17), label: "BASE_W" },
-    { id: "HOLD_IN_N", ...rel(0, 54), label: "HOLD_IN_N" },
-    { id: "HOLD_IN_NE", ...rel(45, 52), label: "HOLD_IN_NE" },
-    { id: "HOLD_IN_E", ...rel(90, 54), label: "HOLD_IN_E" },
-    { id: "HOLD_IN_SE", ...rel(135, 54), label: "HOLD_IN_SE" },
-    { id: "HOLD_IN_S", ...rel(180, 56), label: "HOLD_IN_S" },
-    { id: "HOLD_IN_SW", ...rel(225, 54), label: "HOLD_IN_SW" },
-    { id: "HOLD_IN_W", ...rel(270, 54), label: "HOLD_IN_W" },
-    { id: "HOLD_IN_NW", ...rel(315, 52), label: "HOLD_IN_NW" },
-    { id: "HOLD_N", ...rel(0, 78), label: "HOLD_OUT_N" },
-    { id: "HOLD_NE", ...rel(45, 74), label: "HOLD_OUT_NE" },
-    { id: "HOLD_E", ...rel(90, 78), label: "HOLD_OUT_E" },
-    { id: "HOLD_SE", ...rel(135, 76), label: "HOLD_OUT_SE" },
-    { id: "HOLD_S", ...rel(180, 82), label: "HOLD_OUT_S" },
-    { id: "HOLD_SW", ...rel(225, 76), label: "HOLD_OUT_SW" },
-    { id: "HOLD_W", ...rel(270, 78), label: "HOLD_OUT_W" },
-    { id: "HOLD_NW", ...rel(315, 74), label: "HOLD_OUT_NW" },
-    { id: "DPN1", ...rel(18, 14), label: "DPN1" },
-    { id: "DPN2", ...rel(18, 32), label: "DPN2" },
-    { id: "DPN", ...rel(18, 58), label: "DPN" },
-    { id: "DPE1", ...rel(70, 14), label: "DPE1" },
-    { id: "DPE2", ...rel(70, 34), label: "DPE2" },
-    { id: "DPE", ...rel(70, 58), label: "DPE" },
-    { id: "DPS1", ...rel(165, 14), label: "DPS1" },
-    { id: "DPS2", ...rel(165, 32), label: "DPS2" },
-    { id: "DPS", ...rel(165, 58), label: "DPS" },
-    { id: "DPW1", ...rel(295, 14), label: "DPW1" },
-    { id: "DPW2", ...rel(295, 34), label: "DPW2" },
-    { id: "DPW", ...rel(295, 58), label: "DPW" },
-    { id: "RJCJ", ...bearingToXY(285, 4.5), label: "RJCJ" },
-    { id: "RJCH", ...bearingToXY(212, 74), label: "RJCH" },
-    { id: "RJSM", ...bearingToXY(190, 96), label: "RJSM" },
-    { id: "MA1", ...rel(course, 8), label: "MA1" },
-    { id: "MAHOLD", ...rel(normHeading(course + 35), 17), label: "MAHOLD" },
-  ];
-}
-const navCache = new Map();
-function makeNavCached(runwayName) {
-  const key = runwayName || "01L";
-  if (!navCache.has(key)) navCache.set(key, makeNav(key));
-  return navCache.get(key);
-}
-function wp(nav, id) { return nav.find((w) => w.id === id); }
-function holdInboundCourse(fixId, runwayName = "01L") {
-  const pair = runwayPairName(runwayName);
-  const base = pair === "19" ? 190 : 10;
-  if (fixId.endsWith("_N")) return normHeading(base + 180);
-  if (fixId.endsWith("_S")) return base;
-  if (fixId.endsWith("_E")) return normHeading(base + 270);
-  if (fixId.endsWith("_W")) return normHeading(base + 90);
-  if (fixId.endsWith("_NE")) return normHeading(base + 225);
-  if (fixId.endsWith("_SE")) return normHeading(base + 315);
-  if (fixId.endsWith("_SW")) return normHeading(base + 45);
-  if (fixId.endsWith("_NW")) return normHeading(base + 135);
-  return base;
-}
-function holdPatternPoints(nav, fixId, runwayName = "01L") {
-  const c = wp(nav, fixId);
-  if (!c) return [];
-  const inbound = holdInboundCourse(fixId, runwayName);
-  const outbound = normHeading(inbound + 180);
-  const v = hdgVector(outbound);
-  const r = { x: -v.y, y: v.x };
-  const legNm = 5.2;
-  const halfNm = 1.65;
-  return [
-    { x: c.x + r.x * halfNm * PX_PER_NM, y: c.y + r.y * halfNm * PX_PER_NM, id: `${fixId}_IN` },
-    { x: c.x + v.x * legNm * PX_PER_NM + r.x * halfNm * PX_PER_NM, y: c.y + v.y * legNm * PX_PER_NM + r.y * halfNm * PX_PER_NM, id: `${fixId}_OUT_A` },
-    { x: c.x + v.x * legNm * PX_PER_NM - r.x * halfNm * PX_PER_NM, y: c.y + v.y * legNm * PX_PER_NM - r.y * halfNm * PX_PER_NM, id: `${fixId}_OUT_B` },
-    { x: c.x - r.x * halfNm * PX_PER_NM, y: c.y - r.y * halfNm * PX_PER_NM, id: `${fixId}_IN_B` },
-    { x: c.x + r.x * halfNm * PX_PER_NM, y: c.y + r.y * halfNm * PX_PER_NM, id: `${fixId}_IN` },
-  ];
-}
-function makeRoutes(runwayName) {
-  const pair = runwayPairName(runwayName);
-  return pair === "01"
-    ? { NORTH: ["IAF_N", "DW_W", "BASE_W", "IF01", "FAF"], EAST: ["IAF_E", "DW_E", "BASE_E", "IF01", "FAF"], WEST: ["IAF_W", "DW_W", "BASE_W", "IF01", "FAF"], SOUTH: ["IAF_S", "IF01", "FAF"], VECTORS_IF01: ["IF01", "FAF"], MISSED_RETURN: ["DW_E", "BASE_E", "IF01", "FAF"] }
-    : { NORTH: ["IAF_N", "IF01", "FAF"], EAST: ["IAF_E", "DW_E", "BASE_E", "IF01", "FAF"], WEST: ["IAF_W", "DW_W", "BASE_W", "IF01", "FAF"], SOUTH: ["IAF_S", "DW_E", "BASE_E", "IF01", "FAF"], VECTORS_IF01: ["IF01", "FAF"], MISSED_RETURN: ["DW_W", "BASE_W", "IF01", "FAF"] };
-}
-function makeSids(runwayName) {
-  return {
-    NORTH: { label: `${runwayName}_NORTH`, route: ["DPN1", "DPN2", "DPN"], heading: 18, initialAlt: 5000, topAlt: 14000, speed: 200, exitBearing: 18, exitFix: "DPN" },
-    EAST: { label: `${runwayName}_EAST`, route: ["DPE1", "DPE2", "DPE"], heading: 70, initialAlt: 6000, topAlt: 15000, speed: 200, exitBearing: 70, exitFix: "DPE" },
-    SOUTH: { label: `${runwayName}_SOUTH`, route: ["DPS1", "DPS2", "DPS"], heading: 165, initialAlt: 5000, topAlt: 12000, speed: 200, exitBearing: 165, exitFix: "DPS" },
-    WEST: { label: `${runwayName}_WEST`, route: ["DPW1", "DPW2", "DPW"], heading: 295, initialAlt: 6000, topAlt: 16000, speed: 200, exitBearing: 295, exitFix: "DPW" },
-  };
-}
-function suggestRouteForBearing(b) { if (b > 315 || b < 45) return "NORTH"; if (b < 135) return "EAST"; if (b < 225) return "SOUTH"; return "WEST"; }
-function suggestHoldForBearing(b) {
-  if (b < 30 || b >= 330) return "HOLD_IN_N";
-  if (b < 75) return "HOLD_IN_NE";
-  if (b < 120) return "HOLD_IN_E";
-  if (b < 165) return "HOLD_IN_SE";
-  if (b < 210) return "HOLD_IN_S";
-  if (b < 255) return "HOLD_IN_SW";
-  if (b < 300) return "HOLD_IN_W";
-  return "HOLD_IN_NW";
-}
-
-function pickWeightedSpawnRoute() {
-  const total = spawnRoutes.reduce((s, r) => s + (r.weight || 1), 0);
-  let roll = Math.random() * total;
-  for (const r of spawnRoutes) {
-    roll -= r.weight || 1;
-    if (roll <= 0) return r;
-  }
-  return spawnRoutes[0];
-}
-
-function makeEmptyAircraft() {
-  return {
-    id: "NO TARGET",
-    type: "-",
-    x: CENTER,
-    y: CENTER,
-    heading: 0,
-    speed: 0,
-    altitude: 0,
-    assignedHeading: 0,
-    assignedSpeed: 0,
-    assignedAltitude: 0,
-    speedRestriction: null,
-    mode: "NO_TARGET",
-    route: [],
-    routeIndex: 0,
-    hold: null,
-    clearedILS: false,
-    landed: false,
-    missed: false,
-    category: "ARR",
-    destination: "RJCC",
-    sid: null,
-    depState: null,
-    handedOff: false,
-    fuelMinutes: 0,
-    burnRate: 0,
-    trail: [],
-    color: "#64748b",
-  };
-}
-function makeAircraft(id, type, bearing, range, heading, speed, altitude, color = "#32ff4d") {
-  const p = perfFor(type);
-  const pos = bearingToXY(bearing, range), limitedSpeed = speed <= 0 ? 0 : clamp(speed, p.min, p.max);
-  return { id, type, x: pos.x, y: pos.y, heading, speed: limitedSpeed, altitude, assignedHeading: heading, assignedSpeed: limitedSpeed, assignedAltitude: altitude, speedRestriction: null, mode: "RADAR_CONTACT", route: [], routeIndex: 0, hold: null, clearedILS: false, landed: false, missed: false, category: "ARR", destination: "RJCC", sid: null, depState: null, handedOff: false, fuelMinutes: Math.round(35 + Math.random() * 55), trail: [], color };
-}
-function buildRouteAircraft(env, id, type, routeName, routeIndex, offset, altitude, speed) {
-  const route = env.routes[routeName], target = wp(env.nav, route[routeIndex]), prev = routeIndex > 0 ? wp(env.nav, route[routeIndex - 1]) : null;
-  const base = prev ? { x: prev.x + (target.x - prev.x) * offset, y: prev.y + (target.y - prev.y) * offset } : target;
-  const br = xyToBearingRange(base.x, base.y);
-  return { ...makeAircraft(id, type, br.bearing, br.rangeNm, headingToPoint(base.x, base.y, target), speed, altitude), x: base.x, y: base.y, mode: "ROUTE", route, routeIndex, routeRunway: env.runway.name, approachRunway: env.runway.name };
-}
-function buildFinalAircraft(env, id, type, dme, crossPx, altitude, speed) {
-  const p = runwayPointEnv(env, dme), right = { x: -hdgVector(env.runway.course).y, y: hdgVector(env.runway.course).x };
-  const x = p.x + right.x * crossPx, y = p.y + right.y * crossPx, br = xyToBearingRange(x, y);
-  return { ...makeAircraft(id, type, br.bearing, br.rangeNm, env.runway.course, speed, altitude, "#4de1ff"), x, y, mode: "ILS", clearedILS: true, assignedHeading: env.runway.course, routeRunway: env.runway.name, approachRunway: env.runway.name };
-}
-function buildRadarContact(id, type, sectorBearing, altitude, speed) {
-  const base = Number.isFinite(sectorBearing) ? (spawnRoutes.find((r) => Math.abs(shortestTurn(r.bearing, sectorBearing)) < 24) || pickWeightedSpawnRoute()) : pickWeightedSpawnRoute();
-  return makeAircraft(id, type, normHeading(base.bearing + Math.random() * 8 - 4), base.range + Math.random() * 2 - 1, base.heading, speed, altitude);
-}
-function randomType(idx) { return types[(idx * 3 + Math.floor(Math.random() * types.length)) % types.length]; }
 function makeInitialAircraft(env, depRunwayName = env.runway.name) {
   const pool = [];
   const finalDme = 7.5 + Math.random() * 5;
@@ -509,136 +299,11 @@ function makeScenarioInitialAircraft(env, scenarioId, depRunwayName = env.runway
   }
   return makeInitialAircraft(env, depRunwayName);
 }
-function makeRandomArrival(seq) {
-  const c = callsigns[seq % callsigns.length], t = types[(seq * 3) % types.length], base = pickWeightedSpawnRoute();
-  const id = `${c}${String(100 + ((seq * 47 + Math.floor(Math.random() * 300)) % 900))}`;
-  return makeAircraft(id, t, normHeading(base.bearing + Math.random() * 10 - 5), base.range + Math.random() * 3 - 1.5, base.heading, base.speed, base.altitude);
-}
 function makeIntruderMig31(env, seq = 0) {
   const start = bearingToXY(315, 95);
   const adiz = bearingToXY(315, 48);
   const base = makeAircraft(`FOXHOUND${31 + (seq % 6)}`, "A320", 315, 95, headingToPoint(start.x, start.y, adiz), 320, 31000, "#ef4444");
   return normalizeAircraftState({ ...base, id: `FOXHOUND${31 + (seq % 6)}`, type: "MiG-31", speed: 520, assignedSpeed: 520, maxSpeedOverride: 900 });
-}
-function foxhoundAdizArea() {
-  const center = bearingToXY(315, 48);
-  return { id: "ADIZ-NW", label: "JASDF ADIZ", x: center.x, y: center.y, heading: 315, lengthNm: 30, widthNm: 15, radiusNm: 9.5 };
-}
-function adizRectCorners(area = foxhoundAdizArea()) {
-  const v = hdgVector(area.heading || 315);
-  const r = { x: -v.y, y: v.x };
-  const hl = (area.lengthNm || 30) * PX_PER_NM / 2;
-  const hw = (area.widthNm || 15) * PX_PER_NM / 2;
-  return [
-    { x: area.x + v.x * hl + r.x * hw, y: area.y + v.y * hl + r.y * hw },
-    { x: area.x + v.x * hl - r.x * hw, y: area.y + v.y * hl - r.y * hw },
-    { x: area.x - v.x * hl - r.x * hw, y: area.y - v.y * hl - r.y * hw },
-    { x: area.x - v.x * hl + r.x * hw, y: area.y - v.y * hl + r.y * hw },
-  ];
-}
-function adizLocalCoordsNm(x, y, area = foxhoundAdizArea()) {
-  const v = hdgVector(area.heading || 315);
-  const r = { x: -v.y, y: v.x };
-  const dx = x - area.x;
-  const dy = y - area.y;
-  return {
-    alongNm: (dx * v.x + dy * v.y) / PX_PER_NM,
-    crossNm: (dx * r.x + dy * r.y) / PX_PER_NM,
-  };
-}
-function pointInAdizRect(x, y, area = foxhoundAdizArea()) {
-  const local = adizLocalCoordsNm(x, y, area);
-  return Math.abs(local.alongNm) <= (area.lengthNm || 30) / 2 && Math.abs(local.crossNm) <= (area.widthNm || 15) / 2;
-}
-function foxhoundDeepPenetration(ac, area = foxhoundAdizArea()) {
-  if (!pointInAdizRect(ac.x, ac.y, area)) return false;
-  const local = adizLocalCoordsNm(ac.x, ac.y, area);
-  return local.alongNm <= -2.0;
-}
-function distanceFromAdizCenterNm(ac, area = foxhoundAdizArea()) {
-  return Math.hypot(ac.x - area.x, ac.y - area.y) / PX_PER_NM;
-}
-function isFoxhound(ac) {
-  return ac?.type === "MiG-31" || ac?.mode === "FOXHOUND_INBOUND" || ac?.mode === "FOXHOUND_EGRESS" || ac?.mode === "FOXHOUND_FORMATION";
-}
-function isScenario05InterceptPair(a, b) {
-  const ids = new Set([a?.id, b?.id]);
-  const types = new Set([a?.type, b?.type]);
-  const modes = new Set([a?.mode, b?.mode]);
-  const eagleFoxhoundIds = ids.has("EAGLE01") && [...ids].some((id) => String(id || "").startsWith("FOXHOUND"));
-  const f15FoxhoundTypes = types.has("F-15J") && types.has("MiG-31");
-  const formationOrJoin = [...modes].some((m) => ["FOXHOUND_INBOUND", "FOXHOUND_FORMATION", "ADIZ_ESCORT", "RJCJ_DEP"].includes(m)) || a?.interceptPhase || b?.interceptPhase;
-  return (eagleFoxhoundIds || f15FoxhoundTypes) && formationOrJoin;
-}
-function scenario05InterceptPlan(f15, mig) {
-  const d = Math.hypot(f15.x - mig.x, f15.y - mig.y) / PX_PER_NM;
-  const migHdg = mig.heading || mig.assignedHeading || 135;
-  const migSpeed = mig.speed || mig.assignedSpeed || 520;
-  const migV = hdgVector(migHdg);
-  const migRight = { x: -migV.y, y: migV.x };
-  const relX = (f15.x - mig.x) / PX_PER_NM;
-  const relY = (f15.y - mig.y) / PX_PER_NM;
-  const alongNm = relX * migV.x + relY * migV.y;
-  const crossNm = relX * migRight.x + relY * migRight.y;
-  const side = 1;
-  let phase = "CUT_OFF";
-  let aim;
-  let assignedHeading;
-  let assignedSpeed;
-  let assignedAltitude = mig.altitude || 31000;
-
-  if (d > 24) {
-    phase = "CUT_OFF";
-    const leadNm = clamp(d * 0.42, 10, 22);
-    aim = {
-      x: mig.x + migV.x * leadNm * PX_PER_NM + migRight.x * side * 4.0 * PX_PER_NM,
-      y: mig.y + migV.y * leadNm * PX_PER_NM + migRight.y * side * 4.0 * PX_PER_NM,
-    };
-    assignedSpeed = f15.altitude < 10000 ? 520 : (f15.maxSpeedOverride || 880);
-    assignedAltitude = 32000;
-  } else if (d > 10) {
-    phase = "CONVERT";
-    const leadNm = clamp(d * 0.22, 3.5, 8.0);
-    aim = {
-      x: mig.x + migV.x * leadNm * PX_PER_NM + migRight.x * side * 2.6 * PX_PER_NM,
-      y: mig.y + migV.y * leadNm * PX_PER_NM + migRight.y * side * 2.6 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 210);
-  } else if (d > 5.5) {
-    phase = "REJOIN";
-    aim = {
-      x: mig.x - migV.x * 3.2 * PX_PER_NM + migRight.x * side * 1.45 * PX_PER_NM,
-      y: mig.y - migV.y * 3.2 * PX_PER_NM + migRight.y * side * 1.45 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 110);
-  } else if (d > 2.2) {
-    phase = "JOIN_STERN";
-    aim = {
-      x: mig.x - migV.x * 1.75 * PX_PER_NM + migRight.x * side * 0.9 * PX_PER_NM,
-      y: mig.y - migV.y * 1.75 * PX_PER_NM + migRight.y * side * 0.9 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 35);
-  } else {
-    phase = "VISUAL_ID";
-    aim = {
-      x: mig.x - migV.x * 1.45 * PX_PER_NM + migRight.x * side * 0.75 * PX_PER_NM,
-      y: mig.y - migV.y * 1.45 * PX_PER_NM + migRight.y * side * 0.75 * PX_PER_NM,
-    };
-    assignedSpeed = migSpeed;
-  }
-
-  const overshot = alongNm > 1.8 && d < 10;
-  if (overshot) {
-    phase = "CONVERT";
-    aim = {
-      x: mig.x - migV.x * 2.2 * PX_PER_NM + migRight.x * side * (crossNm >= 0 ? 2.2 : 3.2) * PX_PER_NM,
-      y: mig.y - migV.y * 2.2 * PX_PER_NM + migRight.y * side * (crossNm >= 0 ? 2.2 : 3.2) * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 65);
-  }
-
-  assignedHeading = phase === "VISUAL_ID" ? migHdg : headingToPoint(f15.x, f15.y, aim);
-  return { phase, aim, assignedHeading, assignedSpeed, assignedAltitude, distanceNm: d, migHdg, migSpeed, alongNm, crossNm };
 }
 function makeFoxhoundIntruder(env, seq = 0) {
   const base = makeIntruderMig31(env, seq);
@@ -675,30 +340,6 @@ function makeScenario05Interceptor(env) {
     noCommandDelay: true,
     color: "#60a5fa"
   });
-}
-function adizEscortComplete(ac) {
-  if (!ac || ac.mode !== "ADIZ_ESCORT") return false;
-  const area = ac.adizArea || foxhoundAdizArea();
-  return !pointInAdizRect(ac.x, ac.y, area) && xyToBearingRange(ac.x, ac.y).rangeNm > 62;
-}
-function foxhoundEscortPatch(ac, env) {
-  const rjcj = wp(env.nav, "RJCJ") || bearingToXY(285, 4.5);
-  return {
-    type: "F-15J",
-    mode: "RJCJ_RTB",
-    category: "MIL",
-    destination: "RJCJ",
-    contact: "RJCJ",
-    assignedHeading: headingToPoint(ac.x, ac.y, rjcj),
-    assignedAltitude: 8000,
-    assignedSpeed: 320,
-    missionKind: "INTERCEPT_RTB",
-    interceptMerged: false,
-    escortingMig: null,
-    adizArea: null,
-    maxSpeedOverride: 750,
-    color: "#60a5fa"
-  };
 }
 function makeMilitary(seq, existing = [], forcedType = null, env = null) {
   const id = `${milCallsigns[seq % milCallsigns.length]}${String(10 + (seq * 7) % 80)}`;
