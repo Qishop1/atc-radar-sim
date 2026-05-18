@@ -1,7 +1,7 @@
 {
   "name": "atc-radar-sim",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "ATC Radar Simulator",
   "author": "",
   "type": "module",
