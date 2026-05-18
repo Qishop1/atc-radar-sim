@@ -65,6 +65,22 @@ import {
   wakeMinNm,
 } from "./simulator/aircraftPerf.js";
 import { STATE_ALIAS, VALID_TRANSITIONS } from "./simulator/stateMachine.js";
+import {
+  activeAirportRunway,
+  aircraftWithinWeatherAltitude,
+  divertRequired,
+  generatedWind,
+  intersectsRedWeather,
+  makeWeatherCells,
+  nearestRedWeatherAhead,
+  parseWind,
+  pointInWeatherCell,
+  runwayHeadwind,
+  segmentIntersectsWeather,
+  weatherTiles,
+  windVector,
+} from "./simulator/weather.js";
+import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from "./simulator/scenarios.js";
 
 const I18N = {
   en: {
@@ -503,95 +519,6 @@ function ilsBoundaryLines(origin, course, nearNm = 0, farNm = 18, nearHalfPx = I
 }
 function runwayPointEnv(env, dme) { return runwayPointForRunway(env.runway.name, dme); }
 function finalGeometryRunway(env, x, y) { return finalGeometryAt(runwayOrigin(env.runway), env.runway.course, x, y); }
-function parseWind(text) {
-  let s = String(text || "").toUpperCase().replaceAll(" ", "").replace("AT", "/").replace("KT", "");
-  let dir = 360;
-  let speed = 0;
-  if (s.includes("/")) {
-    const parts = s.split("/");
-    dir = Number(parts[0]);
-    speed = Number(parts[1]);
-  } else if (s.length >= 4) {
-    dir = Number(s.slice(0, 3));
-    speed = Number(s.slice(3));
-  }
-  return { dir: Number.isFinite(dir) ? normHeading(dir) : 360, speed: Number.isFinite(speed) ? speed : 0 };
-}
-function runwayHeadwind(wind, course) { return wind.speed * Math.cos((shortestTurn(course, wind.dir) * Math.PI) / 180); }
-function generatedWind(seed = 0) {
-  const phaseLen = 6;
-  const phase = Math.floor(seed / phaseLen);
-  const inPhase = seed - phase * phaseLen;
-  const progress = clamp(inPhase / phaseLen, 0, 0.999);
-  const smooth = progress * progress * (3 - 2 * progress);
-
-  const makePhaseWind = (p) => {
-    const frontal = Math.sin(p / 5.2) > 0.86;
-    const frontalShift = frontal ? 135 + Math.sin(p * 0.73) * 35 : 0;
-    const dir = normHeading(330 + Math.sin(p * 1.7) * 28 + Math.sin(p * 0.61) * 36 + frontalShift);
-    const base = 7 + Math.sin(p * 1.13) * 3 + Math.max(0, Math.sin(p * 2.1) * 5);
-    const speed = clamp(Math.round(base + (frontal ? 10 + Math.max(0, Math.sin(p * 3.7) * 8) : 0)), 2, 34);
-    return { dir, speed };
-  };
-
-  const current = makePhaseWind(phase);
-  const next = makePhaseWind(phase + 1);
-  const turn = shortestTurn(current.dir, next.dir);
-  const dir = normHeading(current.dir + turn * smooth);
-  const speed = Math.round(current.speed + (next.speed - current.speed) * smooth);
-  const remainingSeed = Math.max(0.01, phaseLen - inPhase);
-
-  return {
-    dir,
-    speed,
-    nextDir: next.dir,
-    nextSpeed: next.speed,
-    changeIn: Math.max(1, Math.round(remainingSeed * 120)),
-  };
-}
-function windVector(wind) { return hdgVector(normHeading(wind.dir + 180)); }
-function divertRequired(wind) { return wind.speed >= 35; }
-function aircraftWithinWeatherAltitude(ac, cell) {
-  const base = cell.baseAlt ?? 0;
-  const top = cell.topAlt ?? 60000;
-  const alt = ac?.altitude ?? 0;
-  return alt >= base && alt <= top;
-}
-function pointInWeatherCell(px, py, cell) {
-  const angle = ((cell.angle || 0) * Math.PI) / 180;
-  const dx = px - cell.x, dy = py - cell.y;
-  const ca = Math.cos(angle), sa = Math.sin(angle);
-  const lx = dx * ca + dy * sa;
-  const ly = -dx * sa + dy * ca;
-  const len = cell.len || cell.r || 40;
-  const wid = cell.wid || cell.r || 25;
-  return (lx * lx) / (len * len) + (ly * ly) / (wid * wid) < 1;
-}
-function segmentIntersectsWeather(a, b, cell) {
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    if (pointInWeatherCell(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, cell)) return true;
-  }
-  return false;
-}
-function intersectsRedWeather(a, b, weatherCells, ac = null) {
-  return weatherCells.some((c) => c.level === "RED" && (!ac || aircraftWithinWeatherAltitude(ac, c)) && segmentIntersectsWeather(a, b, c));
-}
-function nearestRedWeatherAhead(ac, heading, weatherCells) {
-  const lookaheadNm = ac.category === "MIL" ? Math.max(16, Math.min(34, (ac.speed || 250) / 12)) : 10;
-  const v = hdgVector(heading);
-  const ahead = { x: ac.x + v.x * lookaheadNm * PX_PER_NM, y: ac.y + v.y * lookaheadNm * PX_PER_NM };
-  let best = null;
-  for (const c of weatherCells) {
-    if (c.level !== "RED" || !aircraftWithinWeatherAltitude(ac, c)) continue;
-    const d = distancePointToSegment({ x: c.x, y: c.y }, { x: ac.x, y: ac.y }, ahead);
-    const along = ((c.x - ac.x) * v.x + (c.y - ac.y) * v.y) / PX_PER_NM;
-    const side = (c.x - ac.x) * (-v.y) + (c.y - ac.y) * v.x;
-    const threshold = Math.max(c.len || c.r || 35, c.wid || c.r || 25) * 0.72;
-    if (along > -1 && along < lookaheadNm && d < threshold && (!best || d < best.d)) best = { cell: c, d, along, side };
-  }
-  return best;
-}
 function nearestMissionAreaAhead(ac, heading) {
   if (!ac.avoidMissionAreas) return null;
   if (ac.category === "MIL" || isApproachMode(ac.mode) || ac.mode === "HOLD" || isAlternateMode(ac.mode)) return null;
@@ -609,183 +536,6 @@ function nearestMissionAreaAhead(ac, heading) {
     if (dPx < limitPx && (!best || dPx < best.dPx)) best = { area, point: p, dPx, along, side };
   }
   return best;
-}
-function makeWeatherCells(seed = 0, weatherSeed = 0, scenarioId = "") {
-  const roll = weatherSeed % 1;
-  const scenario = scenarioId === "winter_sar_front" ? "WINTER_SAR" : roll < 0.18 ? "VMC" : roll < 0.42 ? "SCATTERED" : roll < 0.76 ? "FRONTAL" : "SEVERE";
-  if (scenario === "VMC") return [];
-
-  const t = seed;
-  const cycle = (Math.floor(seed * 1.4) + Math.floor(weatherSeed * 1000)) % 360;
-  const baseAngle = 32 + Math.sin(weatherSeed * 17.13) * 28;
-  const driftX = Math.sin(t * 0.11) * 58 + t * 0.018;
-  const driftY = Math.cos(t * 0.09) * 42 + t * 0.012;
-  const sx = Math.sin(weatherSeed * 41.7) * 150;
-  const sy = Math.cos(weatherSeed * 37.3) * 130;
-  const pulse = 0.72 + Math.max(0, Math.sin(t / 31 + weatherSeed * 23.5)) * 0.55;
-  const severeScale = scenario === "SEVERE" ? 1.18 : 1.0;
-
-  const alive = (start, end) => {
-    if (start <= end) return cycle >= start && cycle <= end;
-    return cycle >= start || cycle <= end;
-  };
-
-  if (scenario === "WINTER_SAR") {
-    return [
-      { id: "WXSNOW_FIELD", x: CENTER, y: CENTER, len: 185, wid: 150, angle: 18, level: "YELLOW", baseAlt: 0, topAlt: 6500, alive: true },
-      { id: "WXVIS_CORE", x: CENTER + 18 + driftX * 0.35, y: CENTER - 8 + driftY * 0.35, len: 105, wid: 80, angle: 22, level: "RED", baseAlt: 0, topAlt: 3200, alive: true },
-      { id: "WXFRONT_S", x: CENTER - 60 + driftX * 0.55, y: CENTER + 180 + driftY * 0.45, len: 360, wid: 68, angle: 78, level: "YELLOW", baseAlt: 1500, topAlt: 12000, alive: true },
-      { id: "WXCB_SEA", x: CENTER + 70 + driftX * 0.45, y: CENTER + 250 + driftY * 0.55, len: 145, wid: 38, angle: 64, level: "RED", baseAlt: 2000, topAlt: 18000, alive: true },
-    ];
-  }
-
-  if (scenario === "SCATTERED") {
-    const cells = [
-      {
-        id: "WXSHRA1",
-        x: CENTER - 170 + sx * 0.38 + driftX,
-        y: CENTER - 105 + sy * 0.30 + driftY,
-        len: 95 + pulse * 55,
-        wid: 24 + pulse * 16,
-        angle: baseAngle,
-        level: "YELLOW",
-        alive: true,
-      },
-      {
-        id: "WXSHRA2",
-        x: CENTER + 145 - sx * 0.25 + driftX * 0.55,
-        y: CENTER + 135 - sy * 0.26 + driftY * 0.85,
-        len: 82 + Math.abs(Math.cos(weatherSeed * 11 + t / 29)) * 65,
-        wid: 22 + Math.abs(Math.sin(weatherSeed * 10 + t / 35)) * 18,
-        angle: baseAngle - 68,
-        level: "YELLOW",
-        alive: alive(30, 310),
-      },
-      {
-        id: "WXSHRA3",
-        x: CENTER + Math.sin(t / 48 + weatherSeed * 5.2) * 235,
-        y: CENTER - 255 + sy * 0.16 + driftY * 0.50,
-        len: 70 + Math.abs(Math.sin(weatherSeed * 15 + t / 33)) * 70,
-        wid: 18 + Math.abs(Math.cos(weatherSeed * 16 + t / 37)) * 16,
-        angle: 8 + baseAngle * 0.22,
-        level: "YELLOW",
-        alive: alive(105, 350),
-      },
-      {
-        id: "WXCB1",
-        x: CENTER - 135 + sx * 0.42 + driftX * 0.95,
-        y: CENTER - 90 + sy * 0.24 + driftY * 0.85,
-        len: 42 + pulse * 30,
-        wid: 13 + pulse * 10,
-        angle: baseAngle + 5,
-        level: "RED",
-        alive: roll > 0.30 && alive(92, 225),
-      },
-    ];
-    return cells.filter((c) => c.alive && c.len > 8 && c.wid > 6);
-  }
-
-  const frontShift = Math.sin(t / 58 + weatherSeed * 4.6) * 55;
-  const frontLean = baseAngle + Math.sin(t / 70 + weatherSeed * 2.4) * 12;
-  const redGate = scenario === "SEVERE" ? true : alive(80, 250);
-  const cells = [
-    {
-      id: "WXFRONT1",
-      x: CENTER - 225 + sx * 0.32 + driftX + frontShift * 0.55,
-      y: CENTER - 170 + sy * 0.20 + driftY,
-      len: (390 + pulse * 105) * severeScale,
-      wid: (48 + pulse * 44) * severeScale,
-      angle: frontLean,
-      level: "YELLOW",
-      alive: alive(0, 335),
-    },
-    {
-      id: "WXFRONT2",
-      x: CENTER + 110 - sx * 0.22 + driftX * 0.45 - frontShift * 0.35,
-      y: CENTER + 145 - sy * 0.18 + driftY * 0.75,
-      len: (355 + Math.abs(Math.cos(weatherSeed * 11 + t / 41)) * 115) * severeScale,
-      wid: (44 + Math.abs(Math.sin(weatherSeed * 9 + t / 39)) * 42) * severeScale,
-      angle: frontLean - 84,
-      level: "YELLOW",
-      alive: scenario === "SEVERE" || alive(20, 330),
-    },
-    {
-      id: "WXFRONT3",
-      x: CENTER + Math.sin(t / 60 + weatherSeed * 6.3) * 270 + driftX * 0.30,
-      y: CENTER - 305 + sy * 0.18 + driftY * 0.35,
-      len: (300 + Math.abs(Math.sin(weatherSeed * 5 + t / 36)) * 190) * severeScale,
-      wid: (40 + Math.abs(Math.cos(weatherSeed * 17 + t / 44)) * 34) * severeScale,
-      angle: 6 + baseAngle * 0.30,
-      level: "YELLOW",
-      alive: scenario === "SEVERE" ? alive(35, 350) : alive(125, 320),
-    },
-    {
-      id: "WXRED1",
-      x: CENTER - 190 + sx * 0.40 + driftX + frontShift * 0.45,
-      y: CENTER - 138 + sy * 0.24 + driftY,
-      len: (92 + pulse * 72) * severeScale,
-      wid: (17 + pulse * 19) * severeScale,
-      angle: frontLean + 4,
-      level: "RED",
-      alive: redGate && alive(35, 240),
-    },
-    {
-      id: "WXRED2",
-      x: CENTER + 150 - sx * 0.28 + driftX * 0.42 - frontShift * 0.28,
-      y: CENTER + 128 - sy * 0.18 + driftY * 0.72,
-      len: (86 + Math.abs(Math.sin(weatherSeed * 7 + t / 27)) * 78) * severeScale,
-      wid: (16 + Math.abs(Math.cos(weatherSeed * 13 + t / 31)) * 18) * severeScale,
-      angle: frontLean - 82,
-      level: "RED",
-      alive: redGate && alive(72, 275),
-    },
-    {
-      id: "WXRED3",
-      x: CENTER + Math.sin(t / 42 + weatherSeed * 8.1) * 250 + driftX * 0.26,
-      y: CENTER - 295 + sy * 0.16 + driftY * 0.42,
-      len: (70 + Math.abs(Math.sin(weatherSeed * 23 + t / 29)) * 74) * severeScale,
-      wid: (14 + Math.abs(Math.cos(weatherSeed * 29 + t / 31)) * 14) * severeScale,
-      angle: 9 + baseAngle * 0.25,
-      level: "RED",
-      alive: scenario === "SEVERE" && alive(150, 42),
-    },
-  ];
-  return cells.filter((c) => c.alive && c.len > 8 && c.wid > 6);
-}
-function wxHash(x, y, id) {
-  let h = 2166136261;
-  const s = `${id}:${x}:${y}`;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-  return (h >>> 0) / 4294967295;
-}
-function weatherTiles(cell, tile = 9) {
-  const tiles = [];
-  const len = cell.len || cell.r || 40;
-  const wid = cell.wid || cell.r || 25;
-  const angle = ((cell.angle || 0) * Math.PI) / 180;
-  const bound = Math.max(len, wid);
-  const minX = Math.floor((cell.x - bound) / tile) * tile;
-  const maxX = Math.ceil((cell.x + bound) / tile) * tile;
-  const minY = Math.floor((cell.y - bound) / tile) * tile;
-  const maxY = Math.ceil((cell.y + bound) / tile) * tile;
-  const ca = Math.cos(angle), sa = Math.sin(angle);
-  for (let x = minX; x <= maxX; x += tile) {
-    for (let y = minY; y <= maxY; y += tile) {
-      const cx = x + tile / 2, cy = y + tile / 2;
-      const dx = cx - cell.x, dy = cy - cell.y;
-      const lx = dx * ca + dy * sa;
-      const ly = -dx * sa + dy * ca;
-      const d = Math.sqrt((lx * lx) / (len * len) + (ly * ly) / (wid * wid));
-      const noise = wxHash(Math.round(x / tile), Math.round(y / tile), cell.id);
-      const edgeNoise = 0.2 + (noise - 0.5) * 0.42;
-      if (d < 1.0 + edgeNoise && noise > 0.13) tiles.push({ x, y, size: tile * (0.72 + noise * 0.42), opacity: clamp(0.14 + (1 - d) * 0.26 + noise * 0.08, 0.08, 0.48) });
-    }
-  }
-  return tiles;
-}
-function activeAirportRunway(airportId, wind) {
-  const candidates = AIRPORT_RUNWAYS[airportId] || AIRPORT_RUNWAYS.RJCH;
-  return candidates.reduce((best, r) => runwayHeadwind(wind, r.course) > runwayHeadwind(wind, best.course) ? r : best, candidates[0]);
 }
 function airportPoint(env, airportId) {
   return wp(env.nav, airportId) || bearingToXY(285, 4.5);
@@ -994,143 +744,7 @@ function suggestHoldForBearing(b) {
   return "HOLD_IN_NW";
 }
 
-const spawnRoutes = [
-  { bearing: 185, range: 68, heading: 10, altitude: 9000, speed: 215, weight: 4.2 },
-  { bearing: 225, range: 66, heading: 35, altitude: 11000, speed: 240, weight: 2.4 },
-  { bearing: 285, range: 66, heading: 105, altitude: 13000, speed: 265, weight: 2.6 },
-  { bearing: 330, range: 68, heading: 150, altitude: 15000, speed: 285, weight: 1.0 },
-  { bearing: 20, range: 70, heading: 200, altitude: 14000, speed: 280, weight: 0.7 },
-  { bearing: 65, range: 66, heading: 235, altitude: 12000, speed: 270, weight: 0.35 },
-  { bearing: 105, range: 64, heading: 260, altitude: 11000, speed: 250, weight: 0.18 }
-];
-
 const MISSION_AREAS = [];
-const SCENARIOS = [
-  {
-    id: "sandbox",
-    title: "Open Sky — Sandbox",
-    titleZh: "开放天空 — 自由空域",
-    subtitle: "Unscripted Chitose airspace. Traffic, wind, weather and RJCJ activity remain open-ended.",
-    subtitleZh: "没有剧本的千岁空域，流量、风、天气与 RJCJ 活动全部开放，用于自由测试与长期运行。",
-    kind: "SANDBOX",
-    difficulty: "FREE",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "350/08",
-    weatherOn: true,
-  },
-  {
-    id: "debug_lab",
-    title: "Developer Debug Lab — Spawn Test",
-    titleZh: "开发调试场 — 飞机生成测试",
-    subtitle: "Isolated development scenario for aircraft spawning, RJCJ military traffic, runway state, fuel and corridor debugging.",
-    subtitleZh: "独立开发调试场景，用于测试飞机生成、RJCJ 军机流量、跑道状态、燃油与任务走廊，不在普通运行界面显示调试入口。",
-    kind: "DEBUG",
-    difficulty: "DEV",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "350/00",
-    weatherOn: false,
-    autoSpawn: false,
-    depAuto: false,
-    milAuto: false,
-    towerAuto: false,
-  },
-  {
-    id: "morning_flow",
-    seed: "scenario-01-morning-flow-v1",
-    title: "Scenario 01 — The Earth Turns Green Again",
-    titleZh: "关卡 01 — 春回大地",
-    subtitle: "June in Hokkaido. Clear air, steady north wind, and the first calm morning flow into Chitose.",
-    subtitleZh: "北海道的六月，雪线退回远山，北风稳定而清澈；这是千岁清晨最标准的一轮进离场。",
-    kind: "SCENARIO",
-    difficulty: "EASY",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "350/08",
-    weatherOn: false,
-    autoSpawn: true,
-    depAuto: true,
-    milAuto: false,
-    towerAuto: true,
-  },
-  {
-    id: "wind_shift_19",
-    seed: "scenario-02-wind-shift-19-v1",
-    title: "Scenario 02 — Season of the Wind",
-    titleZh: "关卡 02 — 风的季节",
-    subtitle: "A southeast wind reaches Chitose. Finish the old flow, protect the new one, and survive the runway change.",
-    subtitleZh: "从东南吹来的风越过石狩平原，01 方向逐渐失去意义；收住旧流量，再把空域交给 19。",
-    kind: "SCENARIO",
-    difficulty: "MEDIUM",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "340/10",
-    weatherOn: false,
-    autoSpawn: true,
-    depAuto: true,
-    milAuto: false,
-    towerAuto: false,
-  },
-  {
-    id: "snow_shower_final",
-    seed: "scenario-03-snow-shower-final-v1",
-    title: "Scenario 03 — White Final",
-    titleZh: "关卡 03 — 白色五边",
-    subtitle: "Snow showers cut across the arrival path. Radar spacing is easy; keeping the final usable is not.",
-    subtitleZh: "雪阵压到五边附近，雷达间隔本身并不难；真正的问题是让每架飞机都还有路可走。",
-    kind: "SCENARIO",
-    difficulty: "MEDIUM",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "330/14",
-    weatherOn: true,
-    weatherSeed: 0.81,
-    autoSpawn: true,
-    depAuto: false,
-    milAuto: false,
-    towerAuto: false,
-  },
-  {
-    id: "winter_sar_front",
-    seed: "scenario-04-winter-sar-front-v1",
-    title: "Scenario 04 — Strait of White Water",
-    titleZh: "关卡 04 — 白浪海峡",
-    subtitle: "A winter front covers Chitose while RJCJ SAR launches toward the Tsugaru Strait.",
-    subtitleZh: "冬季锋面压住千岁，大雪与低能见度中，航空救難団向津轻海峡东侧开放水域紧急出动。",
-    kind: "SCENARIO",
-    difficulty: "HARD",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "030/28",
-    weatherOn: true,
-    weatherSeed: 0.96,
-    autoSpawn: true,
-    depAuto: false,
-    milAuto: false,
-    towerAuto: false,
-  },
-  {
-    id: "foxhound_adiz_05",
-    seed: "scenario-05-foxhound-adiz-v1",
-    title: "Scenario 05 — Foxhound Crossing",
-    titleZh: "关卡 05 — 狐犬越境",
-    subtitle: "A VKS MiG-31 enters from the northwest toward the JASDF ADIZ. RJCJ scrambles an F-15J at maximum intercept speed while Chitose APP handles a saturated clear-weather arrival bank.",
-    subtitleZh: "晴空下的西北方向出现俄罗斯空天军 MiG-31 航迹，航空自卫队防空识别区即将被刺穿；RJCJ 的 F-15J 紧急升空以最大截击速度追赶，而千岁进近仍要处理极高密度进场流量。",
-    kind: "SCENARIO",
-    difficulty: "HARD",
-    arrRunway: "01L",
-    depRunway: "01R",
-    wind: "010/05",
-    weatherOn: false,
-    autoSpawn: true,
-    spawnRate: 34,
-    depAuto: false,
-    milAuto: false,
-    towerAuto: false,
-    special: "FOXHOUND_ADIZ",
-  },
-];
 const SAR_AREA_BEARINGS = [145, 165, 190, 215, 245, 275];
 function makeSarMissionArea(seq = 0, type = "U-125A") {
   const b = SAR_AREA_BEARINGS[Math.abs(seq) % SAR_AREA_BEARINGS.length] + Math.sin(seq * 1.91) * 9;
@@ -1385,55 +999,6 @@ function makeScenarioInitialAircraft(env, scenarioId, depRunwayName = env.runway
     ].map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
   }
   return makeInitialAircraft(env, depRunwayName);
-}
-function scenarioTrafficPlan(scenarioId) {
-  if (scenarioId === "morning_flow") return [
-    { at: 180, kind: "ARR", id: "SKY142", type: "B738", sector: 185, alt: 9000, spd: 230 },
-    { at: 300, kind: "DEP", seq: 33 },
-    { at: 420, kind: "ARR", id: "ADO318", type: "E170", sector: 225, alt: 10000, spd: 235 },
-    { at: 620, kind: "ARR", id: "JAL602", type: "B763", sector: 285, alt: 11000, spd: 245 },
-  ];
-  if (scenarioId === "wind_shift_19") return [
-    { at: 180, kind: "ARR", id: "ANA884", type: "A321", sector: 185, alt: 10000, spd: 235 },
-    { at: 340, kind: "DEP", seq: 42 },
-    { at: 560, kind: "ARR", id: "JAL193", type: "B738", sector: 225, alt: 11000, spd: 240 },
-    { at: 760, kind: "ARR", id: "ADO812", type: "B789", sector: 285, alt: 13000, spd: 255 },
-  ];
-  if (scenarioId === "snow_shower_final") return [
-    { at: 220, kind: "ARR", id: "SKY505", type: "B738", sector: 185, alt: 10000, spd: 230, etaSec: 1380 },
-    { at: 420, kind: "ARR", id: "ANA166", type: "B789", sector: 285, alt: 13000, spd: 255, etaSec: 1640 },
-    { at: 700, kind: "DEP", seq: 52 },
-    { at: 860, kind: "ARR", id: "APJ901", type: "A320", sector: 225, alt: 11000, spd: 238, etaSec: 2140 },
-  ];
-  if (scenarioId === "winter_sar_front") return [
-    { at: 160, kind: "ARR", id: "ANA472", type: "B789", sector: 185, alt: 13000, spd: 255, etaSec: 1560 },
-    { at: 260, kind: "MIL", seq: 140, type: "U-125A" },
-    { at: 340, kind: "ARR", id: "JAL908", type: "B763", sector: 225, alt: 12000, spd: 245, etaSec: 1860 },
-    { at: 560, kind: "ARR", id: "ADO244", type: "B738", sector: 285, alt: 11000, spd: 240, etaSec: 2240 },
-    { at: 760, kind: "DEP", seq: 62 },
-    { at: 980, kind: "ARR", id: "SKY721", type: "A320", sector: 185, alt: 10000, spd: 232, etaSec: 2680 },
-    { at: 1260, kind: "ARR", id: "APJ317", type: "A321", sector: 225, alt: 11000, spd: 238, etaSec: 3020 },
-  ];
-  if (scenarioId === "foxhound_adiz_05") return [
-    { at: 90, kind: "ARR", id: "ANA115", type: "B738", sector: 185, alt: 10000, spd: 235, etaSec: 1280 },
-    { at: 150, kind: "ARR", id: "JAL728", type: "A321", sector: 225, alt: 11000, spd: 240, etaSec: 1420 },
-    { at: 220, kind: "ARR", id: "ADO330", type: "B789", sector: 285, alt: 13000, spd: 255, etaSec: 1580 },
-    { at: 300, kind: "ARR", id: "SKY904", type: "B738", sector: 185, alt: 10000, spd: 232, etaSec: 1740 },
-    { at: 390, kind: "ARR", id: "APJ661", type: "A320", sector: 225, alt: 11000, spd: 238, etaSec: 1900 },
-    { at: 500, kind: "ARR", id: "JAL403", type: "B763", sector: 285, alt: 12000, spd: 245, etaSec: 2120 },
-    { at: 640, kind: "ARR", id: "ANA982", type: "B772", sector: 185, alt: 13000, spd: 250, etaSec: 2380 },
-    { at: 820, kind: "ARR", id: "ADO771", type: "E170", sector: 225, alt: 10000, spd: 226, etaSec: 2640 },
-    { at: 980, kind: "DEP", seq: 72 },
-  ];
-  return [];
-}
-function scenarioObjectives(scenarioId) {
-  if (scenarioId === "morning_flow") return { duration: 2640, landed: 5, handoff: 2, maxConflict: 0, maxMissed: 1 };
-  if (scenarioId === "wind_shift_19") return { duration: 2640, landed: 4, handoff: 2, maxConflict: 0, maxMissed: 3 };
-  if (scenarioId === "snow_shower_final") return { duration: 3000, landed: 4, handoff: 1, maxConflict: 0, maxMissed: 2 };
-  if (scenarioId === "winter_sar_front") return { duration: 4200, landed: 3, handoff: 1, maxConflict: 0, maxMissed: 4 };
-  if (scenarioId === "foxhound_adiz_05") return { duration: 4800, landed: 6, handoff: 1, maxConflict: 0, maxMissed: 3, special: "FOXHOUND_ADIZ" };
-  return null;
 }
 function makeRandomArrival(seq) {
   const c = callsigns[seq % callsigns.length], t = types[(seq * 3) % types.length], base = pickWeightedSpawnRoute();
