@@ -19,4 +19,20 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['**/*.{js,jsx}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+      globals: globals.browser,
+    },
+    rules: {
+      'no-undef': 'error',
+    },
+  },
 ])
