@@ -6,6 +6,10 @@ ATC Radar Simulator is a Vite React + Electron air traffic control radar simulat
 
 ATC Radar Simulator 是一个基于 Vite React + Electron 的空管雷达模拟器。
 
+For a maintainer-oriented map of the project, see [Codebase Tour](docs/CODEBASE_TOUR.md).
+
+如需维护者视角的项目结构导览，请参阅 [代码库导览](docs/CODEBASE_TOUR.md)。
+
 v0.5.1 is a pre-release/testing build.
 
 v0.5.1 是预发布/测试版本。
