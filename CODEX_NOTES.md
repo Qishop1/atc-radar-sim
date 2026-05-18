@@ -1,0 +1,7 @@
+- This is a Vite React ATC radar simulator.
+- Do not rewrite the simulator from scratch.
+- Prefer small diffs.
+- Always run npm.cmd run build after edits on Windows.
+- Keep gameplay behavior unchanged unless explicitly requested.
+- Radar extrapolation is display-only and must not affect aircraft physics.
+- Keep aircraft mode strings stable unless a task explicitly asks for state-machine refactoring.
