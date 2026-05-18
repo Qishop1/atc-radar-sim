@@ -42,7 +42,8 @@ Windows 可执行文件未进行代码签名。打开安装包或应用时，Mic
 
 ## Developer documentation / 开发者文档
 
-For developer onboarding and architecture notes, see [docs/CODEBASE_TOUR.md](docs/CODEBASE_TOUR.md).
+For developer onboarding and architecture notes, see/如需查看开发者入门说明和架构笔记，请参阅 [docs/CODEBASE_TOUR.md](docs/CODEBASE_TOUR.md).
+
 
 ## Web Development / Web 开发运行
 
