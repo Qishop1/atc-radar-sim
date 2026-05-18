@@ -27,7 +27,7 @@ Typical release asset:
 常见发布文件：
 
 ```text
-ATC Radar Simulator Setup 0.5.1.exe.zip
+ATC-Radar-Simulator-Setup-0.5.1.zip
 ```
 
 Extract the `.zip`, then run the installer `.exe`.
