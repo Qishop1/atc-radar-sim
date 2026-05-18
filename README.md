@@ -1,73 +1,107 @@
-# React + TypeScript + Vite
+# ATC Radar Simulator / 空管雷达模拟器
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Version / 版本: v0.5.1
 
-Currently, two official plugins are available:
+ATC Radar Simulator is a Vite React + Electron air traffic control radar simulator.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+ATC Radar Simulator 是一个基于 Vite React + Electron 的空管雷达模拟器。
 
-## React Compiler
+v0.5.1 is a pre-release/testing build.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+v0.5.1 是预发布/测试版本。
 
-## Expanding the ESLint configuration
+## Download / 下载
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Windows builds are published on GitHub Releases:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Windows 版本已发布在 GitHub Releases：
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+[Download the latest release / 下载最新版本](https://github.com/Qishop1/atc-radar-sim/releases/latest)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+The release provides a `.zip` archive containing the Windows installer `.exe`.
+
+Release 中提供了包含 Windows 安装程序 `.exe` 的 `.zip` 压缩包。
+
+Typical release asset:
+
+常见发布文件：
+
+```text
+ATC Radar Simulator Setup 0.5.1.exe.zip
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Extract the `.zip`, then run the installer `.exe`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+解压 `.zip` 后，运行其中的 `.exe` 安装程序。
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Windows Security Notice / Windows 安全提示
+
+The Windows executable is unsigned. Microsoft SmartScreen may show a warning when opening the installer or app.
+
+Windows 可执行文件未进行代码签名。打开安装包或应用时，Microsoft SmartScreen 可能会显示警告。
+
+## Web Development / Web 开发运行
+
+Start the Vite development server:
+
+启动 Vite 开发服务器：
+
+```powershell
+npm.cmd run dev
+```
+
+## Electron Development / Electron 开发运行
+
+Build the Vite app and launch it in Electron:
+
+构建 Vite 应用并用 Electron 启动：
+
+```powershell
+npm.cmd run electron:dev
+```
+
+## Web Build / Web 构建
+
+Build the production web app:
+
+构建生产版 Web 应用：
+
+```powershell
+npm.cmd run build
+```
+
+The web build is generated in:
+
+Web 构建产物生成在：
+
+```text
+dist/
+```
+
+## Windows Installer Build / Windows 安装包构建
+
+Build the Windows installer:
+
+构建 Windows 安装包：
+
+```powershell
+npm.cmd run dist:win
+```
+
+Local release artifacts are generated in:
+
+本地发布产物生成在：
+
+```text
+release/
+```
+
+Typical local outputs include:
+
+常见本地输出包括：
+
+```text
+release/ATC Radar Simulator Setup 0.5.1.exe
+release/ATC Radar Simulator Setup 0.5.1.exe.zip
+release/win-unpacked/ATC Radar Simulator.exe
 ```

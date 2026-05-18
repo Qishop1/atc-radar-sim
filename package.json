@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "electron:dev": "npm.cmd run build && electron .",
-    "dist:win": "set ELECTRON_CACHE=.electron-cache&& set ELECTRON_BUILDER_CACHE=.electron-builder-cache&& set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm.cmd run build && electron-builder --win --x64",
+    "dist:win": "set ELECTRON_CACHE=.electron-cache&& set ELECTRON_BUILDER_CACHE=.electron-builder-cache&& set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm.cmd run build && electron-builder --win --x64 && powershell -NoProfile -ExecutionPolicy Bypass -Command \"$setup = 'release\\ATC Radar Simulator Setup ' + $env:npm_package_version + '.exe'; $zip = $setup + '.zip'; Compress-Archive -LiteralPath $setup -DestinationPath $zip -Force\"",
     "lint": "eslint .",
     "preview": "vite preview"
   },
