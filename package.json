@@ -2,12 +2,38 @@
   "name": "atc-radar-sim",
   "private": true,
   "version": "0.5.0",
+  "description": "ATC Radar Simulator",
+  "author": "",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "electron:dev": "npm.cmd run build && electron .",
+    "dist:win": "set ELECTRON_CACHE=.electron-cache&& set ELECTRON_BUILDER_CACHE=.electron-builder-cache&& set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm.cmd run build && electron-builder --win --x64",
     "lint": "eslint .",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "com.atcradarsim.desktop",
+    "productName": "ATC Radar Simulator",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "dependencies": {
     "react": "^19.2.6",
@@ -19,6 +45,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
