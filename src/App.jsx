@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import MissionStatusPanel from "./components/MissionStatusPanel.jsx";
 import ObjectivePanel from "./components/ObjectivePanel.jsx";
 import RadioLog from "./components/RadioLog.jsx";
+import CommandPanel from "./components/CommandPanel.jsx";
+import ControlConsole from "./components/ControlConsole.jsx";
+import RunwayControls from "./components/RunwayControls.jsx";
 import SequenceStrip from "./components/SequenceStrip.jsx";
+import SelectedAircraftPanel from "./components/SelectedAircraftPanel.jsx";
 import StartScreen from "./components/StartScreen.jsx";
 import {
   AIRPORT_RUNWAYS,
@@ -3815,16 +3819,38 @@ export default function ATCRadarSimulator() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: "calc(100vh - 20px)", overflowY: "auto", overflowX: "hidden", paddingRight: 4 }}>
-          <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 12 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>{tr("controlConsole")}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 10 }}>
-              <button style={seat === "APP" ? activeButton : buttonStyle} onClick={() => setSeat("APP")}>{lang === "zh" ? "进近" : "APP"}</button>
-              <button style={seat === "DEP" ? activeButton : buttonStyle} onClick={() => setSeat("DEP")}>{lang === "zh" ? "离场" : "DEP"}</button>
-              <button style={seat === "RJCJ" ? activeButton : buttonStyle} onClick={() => setSeat("RJCJ")}>RJCJ</button>
-              <button style={seat === "TWR" ? activeButton : buttonStyle} onClick={() => setSeat("TWR")}>{lang === "zh" ? "塔台" : "TWR"}</button>
-            </div>
-            <select value={selectedId} onChange={(e) => selectAircraft(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }}>{aircraft.map((a) => <option key={a.id} value={a.id}>{a.id} | {a.category} | {modeText(a)}</option>)}</select>
-            <div style={{ border: "1px solid #1f2937", background: "#030712", borderRadius: 14, padding: 10, color: selected.category === "DEP" ? "#c084fc" : selected.category === "MIL" ? "#60a5fa" : "#32ff4d", fontFamily: "monospace", lineHeight: 1.45, fontSize: 12 }}>{selected.id} | {selected.type} | {catText(selected.category)} | {lang === "zh" ? "席位" : "SEAT"} {seatForAircraft(selected)}<br />{tr("targetBrg")} {fmt3(selectedBR.bearing)} / {selectedBR.rangeNm.toFixed(1)} NM<br />{tr("targetAlt")} {fmtFL(selected.altitude)} | {tr("targetSpd")} {Math.round(selected.speed)} | {tr("targetHdg")} {fmt3(selected.heading)}<br />{tr("fuel")} {Math.round(selected.fuelMinutes ?? 0)} min{selected.category === "MIL" ? ` | BINGO ${Math.round(selected.bingoFuelMinutes ?? militaryBingoFuelMinutes(selected, env))}` : ""} | {tr("burn")} {(selected.burnRate ?? 1).toFixed(1)}x<br />{selected.category === "DEP" ? `${tr("dest")} ${selected.destination} | ${tr("sid")} ${selected.sid || "-"}` : selected.category === "MIL" ? `${tr("dest")} ${selected.destination} | RJCJ ${tr("rwy")} ${env.airports.RJCJ.name}` : `${tr("rwy")} ${activeRunway} ${tr("dme")} ${selectedGeo.alongNm.toFixed(1)} | ${tr("loc")} ${Math.round(selectedGeo.crossPx)} | ${tr("vnav")} ${vnavText(selectedVnavStatus)} ${Math.round(selected.altitude - selectedVnavAlt)}`}<br />{tr("status")} {modeText(selected)}{selected.contact ? ` | ${tr("contact")} ${contactText(selected.contact)}` : ""}{selected.speedRestriction ? ` | ${tr("spdLim")} ${Math.round(selected.speedRestriction)}` : ""}</div>
+          <ControlConsole
+            title={tr("controlConsole")}
+            seat={seat}
+            lang={lang}
+            activeButton={activeButton}
+            buttonStyle={buttonStyle}
+            selectedId={selectedId}
+            aircraft={aircraft}
+            inputStyle={inputStyle}
+            modeText={modeText}
+            onSeatChange={setSeat}
+            onSelectAircraft={selectAircraft}
+            selectedPanel={<SelectedAircraftPanel
+              selected={selected}
+              selectedBR={selectedBR}
+              selectedGeo={selectedGeo}
+              selectedVnavStatus={selectedVnavStatus}
+              selectedVnavAlt={selectedVnavAlt}
+              env={env}
+              activeRunway={activeRunway}
+              tr={tr}
+              lang={lang}
+              fmt3={fmt3}
+              fmtFL={fmtFL}
+              catText={catText}
+              seatForAircraft={seatForAircraft}
+              militaryBingoFuelMinutes={militaryBingoFuelMinutes}
+              vnavText={vnavText}
+              modeText={modeText}
+              contactText={contactText}
+            />}
+          >
             {seat !== "RJCJ" ? <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 10 }}>
                 <label style={{ fontSize: 12 }}>{tr("targetHdg")}<input value={heading} onChange={(e) => setHeading(e.target.value)} style={inputStyle} /></label>
@@ -3841,7 +3867,7 @@ export default function ATCRadarSimulator() {
             </> : <div style={{ border: "1px solid #334155", background: "#020617", borderRadius: 12, padding: 10, marginTop: 10, ...smallText }}>
               {lang === "zh" ? "RJCJ 任务状态为只读。本席位仅作为协调信息板，不提供战术引导、高度、速度、返场、备降、删除或生成军机等控制功能。" : "RJCJ MISSION STATUS is read-only. This seat is a coordination display only; no tactical vector, altitude, speed, recovery, diversion, deletion, or spawn controls are available here."}
             </div>}
-            <div style={{ borderTop: "1px solid #1f2937", marginTop: 12, paddingTop: 12 }}>
+            <CommandPanel>
               {seat === "APP" ? <>
                 <div style={{ border: "1px solid #1f2937", background: "#030712", borderRadius: 12, padding: 8, marginBottom: 10 }}>
                   <div style={{ ...smallText, marginBottom: 6 }}>{lang === "zh" ? "进场目标跑道" : "Approach runway target"}: {approachRunwayChoice === "AUTO" ? `${lang === "zh" ? "自动" : "AUTO"} → ${preferredArrivalRunwayFor(selected)}` : approachRunwayChoice}</div>
@@ -3935,47 +3961,29 @@ export default function ATCRadarSimulator() {
                   </div>
                 </div>
               </>}
-            </div>
-          </div>
+            </CommandPanel>
+          </ControlConsole>
 
-          <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <div style={{ fontSize: 20, fontWeight: 800 }}>{lang === "zh" ? "RJCC 跑道选择器" : "RJCC Runway Planner"}</div>
-              <button style={{ ...buttonStyle, padding: "6px 8px", fontSize: 12 }} onClick={() => setParallelApproach((v) => !v)}>{parallelApproach ? (lang === "zh" ? "平行进近 开" : "Parallel ON") : (lang === "zh" ? "平行进近 关" : "Parallel OFF")}</button>
-            </div>
-            <div style={{ ...smallText, marginBottom: 10 }}>
-              ARR {openArrRunways.join("/")} | DEP {openDepRunways.join("/")} | CLOSED {closedRunways.length ? closedRunways.join("/") : "NONE"}<br />
-              {lang === "zh" ? "点击每条跑道下面的角色按钮；绿色为进场，紫色为离场，黄绿色为混用，红色为关闭。" : "Use the role buttons under each runway. Green is ARR, purple is DEP, yellow-green is BOTH, red is CLOSED."}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {RJCC_RUNWAY_NAMES.map((rw) => {
-                const role = runwayRoleOf(rw);
-                const color = role === "CLOSED" ? "#ef4444" : role === "BOTH" ? "#84cc16" : role === "ARR" ? "#22c55e" : role === "DEP" ? "#a855f7" : "#38bdf8";
-                const hw = runwayHeadwind(windObj, RUNWAYS[rw].course);
-                return <div key={`planner-${rw}`} style={{ border: `1px solid ${color}`, background: "#030712", borderRadius: 14, padding: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                    <b style={{ color, fontFamily: "monospace", fontSize: 15 }}>RWY {rw}</b>
-                    <span style={{ color: hw >= 0 ? "#22c55e" : "#ef4444", fontFamily: "monospace", fontSize: 12 }}>{hw >= 0 ? "HW" : "TW"} {Math.abs(hw).toFixed(1)}</span>
-                  </div>
-                  <div style={{ height: 42, borderRadius: 10, background: `linear-gradient(90deg, rgba(148,163,184,0.12), ${color}55)`, border: `1px solid ${color}66`, display: "flex", alignItems: "center", justifyContent: "center", color, fontWeight: 900, fontFamily: "monospace", marginBottom: 7 }}>{runwayLabelForRole(role)}</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                    <button style={{ ...buttonStyle, padding: "5px 4px", fontSize: 11, background: role === "ARR" ? "#14532d" : "#111827" }} onClick={() => setRunwayRole(rw, "ARR")}>ARR</button>
-                    <button style={{ ...buttonStyle, padding: "5px 4px", fontSize: 11, background: role === "DEP" ? "#581c87" : "#111827" }} onClick={() => setRunwayRole(rw, "DEP")}>DEP</button>
-                    <button style={{ ...buttonStyle, padding: "5px 4px", fontSize: 11, background: role === "BOTH" ? "#365314" : "#111827" }} onClick={() => setRunwayRole(rw, "BOTH")}>BOTH</button>
-                    <button style={{ ...buttonStyle, padding: "5px 4px", fontSize: 11, background: role === "CLOSED" ? "#7f1d1d" : "#111827" }} onClick={() => setRunwayRole(rw, "CLOSED")}>CLOSE</button>
-                  </div>
-                </div>;
-              })}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 10 }}>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan("01", "SPLIT")}>01 SPLIT</button>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan("01", "PARALLEL_ARR")}>01 PAR ARR</button>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan("19", "SPLIT")}>19 SPLIT</button>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan("19", "PARALLEL_ARR")}>19 PAR ARR</button>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan(runwayPairName(activeRunway), "SINGLE_LEFT")}>{runwayPairName(activeRunway)}L SINGLE</button>
-              <button style={buttonStyle} onClick={() => setRunwayEndPlan(runwayPairName(activeRunway), "SINGLE_RIGHT")}>{runwayPairName(activeRunway)}R SINGLE</button>
-            </div>
-          </div>
+          <RunwayControls
+            lang={lang}
+            buttonStyle={buttonStyle}
+            smallText={smallText}
+            openArrRunways={openArrRunways}
+            openDepRunways={openDepRunways}
+            closedRunways={closedRunways}
+            runwayNames={RJCC_RUNWAY_NAMES}
+            activeRunway={activeRunway}
+            windObj={windObj}
+            runways={RUNWAYS}
+            parallelApproach={parallelApproach}
+            runwayPairName={runwayPairName}
+            runwayRoleOf={runwayRoleOf}
+            runwayLabelForRole={runwayLabelForRole}
+            runwayHeadwind={runwayHeadwind}
+            onToggleParallel={() => setParallelApproach((v) => !v)}
+            onSetRunwayRole={setRunwayRole}
+            onSetRunwayEndPlan={setRunwayEndPlan}
+          />
           {runwayNoticeVisible ? <div style={{ border: `2px solid ${runwayNoticeAccent}`, background: "rgba(2, 6, 23, 0.92)", borderRadius: 18, padding: "14px 16px", boxShadow: `0 0 22px ${runwayChangeCandidate.pair ? "rgba(245,158,11,0.28)" : "rgba(56,189,248,0.22)"}`, fontFamily: "monospace" }}>
             <div style={{ fontSize: 20, fontWeight: 900, color: runwayChangeCandidate.pair ? "#fbbf24" : "#7dd3fc", lineHeight: 1.2, marginBottom: 8 }}>{runwayNoticeTitle}</div>
             <div style={{ fontSize: 13, color: "#d1d5db", lineHeight: 1.45 }}>{runwayNoticeBody}</div>
