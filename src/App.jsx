@@ -2,6 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import MissionStatusPanel from "./components/MissionStatusPanel.jsx";
 import ObjectivePanel from "./components/ObjectivePanel.jsx";
 import RadioLog from "./components/RadioLog.jsx";
+import {
+  AlternateHandoffOverlay,
+  AirportOverlay,
+  MissionOverlay,
+  MouseVectorOverlay,
+  ProcedureOverlay,
+  RadarHeaderOverlay,
+  RadarRunwayOverlay,
+  RangeRingsOverlay,
+  TargetLayer,
+  WeatherOverlay,
+} from "./components/RadarOverlays.jsx";
 import CommandPanel from "./components/CommandPanel.jsx";
 import ControlConsole from "./components/ControlConsole.jsx";
 import RunwayControls from "./components/RunwayControls.jsx";
@@ -18,7 +30,6 @@ import {
   ILS_FAR_PX,
   ILS_NEAR_PX,
   MAX_TARGETS,
-  OTHER_RUNWAY_VISUAL_NM,
   PATTERN_ALT,
   PX_PER_NM,
   RADAR_SWEEP_SECONDS,
@@ -34,7 +45,6 @@ import {
   AIRPORTS,
   bearingToXY,
   clamp,
-  distancePointToSegment,
   finalGeometry,
   finalGeometryAt,
   fmt3,
@@ -90,10 +100,61 @@ import {
   pointInWeatherCell,
   runwayHeadwind,
   segmentIntersectsWeather,
-  weatherTiles,
   windVector,
 } from "./simulator/weather.js";
 import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from "./simulator/scenarios.js";
+import {
+  airportApproachGeometry,
+  alternateRunwayConfig,
+  alternateRunwayPoint,
+  finalGeometryRunway,
+  ilsBoundaryLines,
+  runwayPointEnv,
+  runwayPointForRunway,
+  runwayPolygonPoints,
+} from "./simulator/runwayGeometry.js";
+import {
+  makeAircraft,
+  makeEmptyAircraft,
+  makeInitialAircraft,
+  makeRandomArrival,
+  makeScenarioInitialAircraft,
+} from "./simulator/aircraftFactory.js";
+import {
+  adizEscortComplete,
+  adizRectCorners,
+  distanceFromAdizCenterNm,
+  foxhoundAdizArea,
+  foxhoundDeepPenetration,
+  foxhoundEscortPatch,
+  isFoxhound,
+  isScenario05InterceptPair,
+  pointInAdizRect,
+  scenario05InterceptPlan,
+} from "./simulator/interceptScenario.js";
+import {
+  holdPatternPoints,
+  makeNavCached,
+  makeRoutes,
+  makeSids,
+  suggestHoldForBearing,
+  suggestRouteForBearing,
+  wp,
+} from "./simulator/airspaceRoutes.js";
+import {
+  alternateHandoffLabel,
+  alternateHandoffRadiusNm,
+  approachRunwayChangeRequiresMissed,
+  approachRunwayForAircraft,
+  finalGeometryForAircraft,
+  finalLandingState,
+  ilsAutoEligible,
+  isAlternateMode,
+  isApproachMode,
+  isFinalMode,
+  runwayPointForAircraft,
+  wrongRunwayTailwindMiss,
+} from "./simulator/arrivalApproach.js";
 import {
   resolveAlternateTargetState,
   resolveDepartureGroundTargetState,
@@ -105,10 +166,8 @@ import {
   stepRolloutAircraft,
 } from "./simulator/engine.js";
 import {
-  MISSION_AREAS,
   activeMissionCorridors,
   airportDepartureEnd,
-  corridorPolygonPoints,
   displayedMissionAreas,
   getAircraftMissionArea,
   makeSarMissionArea,
@@ -119,91 +178,13 @@ import {
   rjcjHelipadPoint,
   rjcjRunwayForType,
 } from "./simulator/military.js";
+import { militaryBingoFuelMinutes, militaryRtbPatch, nearestMissionAreaAhead, shouldMilitaryRTB } from "./simulator/militaryBoundary.js";
+import { appReacquirePatch as buildAppReacquirePatch, landingClearancePatch, towerArrivalPatch } from "./simulator/commands.js";
+import { applyTowerAutomation } from "./simulator/towerAutomation.js";
 
 const WAKE_ASSESSMENT_DEPS = { approachRunwayForAircraft };
 const SEQUENCING_DEPS = { approachRunwayForAircraft, makeNavCached, wp };
 
-function airportApproachGeometry(airportId, ac) {
-  const ap = AIRPORTS.find((a) => a.id === airportId);
-  if (!ap) return null;
-  const rw = ac?.alternateRunway || (airportId === "RJCH" ? "12" : "RWY");
-  const course = airportId === "RJCH" ? 120 : airportId === "RJSM" ? 100 : 180;
-  const geo = finalGeometryAt({ x: ap.x, y: ap.y }, course, ac.x, ac.y);
-  return { airport: ap, runway: rw, course, geo };
-}
-function alternateRunwayConfig(airportId, wind = null) {
-  const candidates = AIRPORT_RUNWAYS[airportId] || AIRPORT_RUNWAYS.RJCH;
-  const picked = wind ? candidates.reduce((best, r) => runwayHeadwind(wind, r.course) > runwayHeadwind(wind, best.course) ? r : best, candidates[0]) : candidates[0];
-  return { airportId, runwayName: picked.name, course: picked.course };
-}
-function alternateRunwayPoint(airportId, dme, wind = null) {
-  const ap = AIRPORTS.find((a) => a.id === airportId);
-  const cfg = alternateRunwayConfig(airportId, wind);
-  return ap ? runwayPointAt({ x: ap.x, y: ap.y }, cfg.course, dme) : { x: CENTER, y: CENTER };
-}
-function runwayPointForRunway(runwayName, dme) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const origin = runwayOrigin(rw);
-  const v = hdgVector(rw.course);
-  return { x: origin.x - v.x * dme * PX_PER_NM, y: origin.y - v.y * dme * PX_PER_NM };
-}
-function runwayPolygonPoints(runwayName, centerX = CENTER, centerY = CENTER, scale = 1, lenNm = RJCC_RUNWAY_VISUAL_NM, halfWidth = 4) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const origin = runwayOrigin(rw);
-  const v = hdgVector(rw.course);
-  const r = { x: -v.y, y: v.x };
-  const len = lenNm * PX_PER_NM * scale;
-  const offX = (origin.x - CENTER) * scale;
-  const offY = (origin.y - CENTER) * scale;
-  const cx = centerX + offX;
-  const cy = centerY + offY;
-  return [
-    { x: cx - v.x * len + r.x * halfWidth, y: cy - v.y * len + r.y * halfWidth },
-    { x: cx + v.x * len + r.x * halfWidth, y: cy + v.y * len + r.y * halfWidth },
-    { x: cx + v.x * len - r.x * halfWidth, y: cy + v.y * len - r.y * halfWidth },
-    { x: cx - v.x * len - r.x * halfWidth, y: cy - v.y * len - r.y * halfWidth },
-  ];
-}
-function ilsTrapPoints(origin, course, nearNm = 0, farNm = 18, nearHalfPx = ILS_NEAR_PX, farHalfPx = ILS_FAR_PX) {
-  const v = hdgVector(course);
-  const r = { x: -v.y, y: v.x };
-  const near = runwayPointAt(origin, course, nearNm);
-  const far = runwayPointAt(origin, course, farNm);
-  const leftNear = { x: near.x + r.x * nearHalfPx, y: near.y + r.y * nearHalfPx };
-  const leftFar = { x: far.x + r.x * farHalfPx, y: far.y + r.y * farHalfPx };
-  const rightFar = { x: far.x - r.x * farHalfPx, y: far.y - r.y * farHalfPx };
-  const rightNear = { x: near.x - r.x * nearHalfPx, y: near.y - r.y * nearHalfPx };
-  return [leftNear, leftFar, rightFar, rightNear];
-}
-function ilsBoundaryLines(origin, course, nearNm = 0, farNm = 18, nearHalfPx = ILS_NEAR_PX, farHalfPx = ILS_FAR_PX) {
-  const pts = ilsTrapPoints(origin, course, nearNm, farNm, nearHalfPx, farHalfPx);
-  return {
-    polygon: pts,
-    left: [pts[0], pts[1]],
-    right: [pts[3], pts[2]],
-    center: [runwayPointAt(origin, course, nearNm), runwayPointAt(origin, course, farNm)],
-  };
-}
-function runwayPointEnv(env, dme) { return runwayPointForRunway(env.runway.name, dme); }
-function finalGeometryRunway(env, x, y) { return finalGeometryAt(runwayOrigin(env.runway), env.runway.course, x, y); }
-function nearestMissionAreaAhead(ac, heading) {
-  if (!ac.avoidMissionAreas) return null;
-  if (ac.category === "MIL" || isApproachMode(ac.mode) || ac.mode === "HOLD" || isAlternateMode(ac.mode)) return null;
-  const lookaheadNm = Math.max(10, Math.min(22, (ac.speed || 220) / 13));
-  const v = hdgVector(heading);
-  const ahead = { x: ac.x + v.x * lookaheadNm * PX_PER_NM, y: ac.y + v.y * lookaheadNm * PX_PER_NM };
-  let best = null;
-  for (const area of MISSION_AREAS) {
-    const p = missionAreaPoint(area);
-    const along = ((p.x - ac.x) * v.x + (p.y - ac.y) * v.y) / PX_PER_NM;
-    if (along < -1 || along > lookaheadNm) continue;
-    const dPx = distancePointToSegment(p, { x: ac.x, y: ac.y }, ahead);
-    const limitPx = (area.radiusNm + 3.0) * PX_PER_NM;
-    const side = (p.x - ac.x) * (-v.y) + (p.y - ac.y) * v.x;
-    if (dPx < limitPx && (!best || dPx < best.dPx)) best = { area, point: p, dPx, along, side };
-  }
-  return best;
-}
 function estimateBurnRate(ac, targetAltitude, targetSpeed) {
   const perf = perfFor(ac.type);
   if ((ac.fuelMinutes ?? 60) <= 0) return 0;
@@ -226,419 +207,12 @@ function estimateBurnRate(ac, targetAltitude, targetSpeed) {
   if (ac.mode === "HOLD") rate = Math.max(rate, 0.85 * speedFactor * altitudeFactor);
   return clamp(rate, 0.18, 3.2);
 }
-function militaryBingoFuelMinutes(ac, env) {
-  const base = isRotor(ac) ? 10 : ac.type === "F-15J" ? 8 : 11;
-  const rjcj = wp(env.nav, "RJCJ") || bearingToXY(285, 4.5);
-  const distNm = Math.hypot(ac.x - rjcj.x, ac.y - rjcj.y) / PX_PER_NM;
-  const cruiseKts = Math.max(90, Math.min(ac.type === "F-15J" ? 360 : isRotor(ac) ? 95 : 240, ac.assignedSpeed || ac.speed || 160));
-  const timeHome = (distNm / cruiseKts) * 60;
-  const recoveryReserve = isRotor(ac) ? 6 : 7;
-  return clamp(Math.ceil(timeHome + recoveryReserve + base), 8, 28);
-}
-function shouldMilitaryRTB(ac, env) {
-  if (ac.category !== "MIL") return false;
-  if (["RJCJ_RTB", "RJCJ_RECOVERY", "RJCJ_FINAL", "RJCJ_HELO_RECOVERY"].includes(ac.mode)) return false;
-  const bingo = ac.bingoFuelMinutes ?? militaryBingoFuelMinutes(ac, env);
-  return (ac.fuelMinutes ?? 60) <= bingo;
-}
-function militaryRtbPatch(ac, env) {
-  const rjcj = wp(env.nav, "RJCJ") || bearingToXY(285, 4.5);
-  const h = headingToPoint(ac.x, ac.y, rjcj);
-  return {
-    mode: "RJCJ_RTB",
-    assignedHeading: h,
-    assignedAltitude: isRotor(ac) ? 1500 : 5000,
-    assignedSpeed: isRotor(ac) ? 90 : Math.min(260, Math.max(180, ac.speed || 180)),
-    destination: "RJCJ",
-    missionComplete: false,
-    rtbReason: "BINGO FUEL",
-    color: "#fbbf24",
-  };
-}
-
-function makeNav(runwayName) {
-  const rw = RUNWAYS[runwayName] || RUNWAYS["01L"];
-  const pair = runwayPairName(runwayName);
-  const course = rw.course;
-  const origin = runwayOrigin(rw);
-  const opposite = normHeading(course + 180);
-  const eastDownwindBearing = pair === "19" ? normHeading(opposite + 62) : normHeading(opposite - 62);
-  const westDownwindBearing = pair === "19" ? normHeading(opposite - 62) : normHeading(opposite + 62);
-  const eastBaseBearing = pair === "19" ? normHeading(opposite + 40) : normHeading(opposite - 40);
-  const westBaseBearing = pair === "19" ? normHeading(opposite - 40) : normHeading(opposite + 40);
-  const rel = (bearing, rangeNm) => {
-    const v = hdgVector(bearing);
-    return { x: origin.x + v.x * rangeNm * PX_PER_NM, y: origin.y + v.y * rangeNm * PX_PER_NM };
-  };
-  const rwy = (dme) => runwayPointForRunway(rw.name, dme);
-  return [
-    { id: "CHITOSE", x: origin.x, y: origin.y, label: "RJCC" },
-    { id: "FAF", ...rwy(7), label: "FAF" },
-    { id: "IF01", ...rwy(14), label: "IF01" },
-    { id: "IAF_N", ...rel(350, 44), label: "IAF_N" },
-    { id: "IAF_E", ...rel(70, 44), label: "IAF_E" },
-    { id: "IAF_W", ...rel(285, 44), label: "IAF_W" },
-    { id: "IAF_S", ...rel(180, 46), label: "IAF_S" },
-    { id: "DW_E", ...rel(eastDownwindBearing, 18), label: "DW_E" },
-    { id: "DW_W", ...rel(westDownwindBearing, 18), label: "DW_W" },
-    { id: "BASE_E", ...rel(eastBaseBearing, 17), label: "BASE_E" },
-    { id: "BASE_W", ...rel(westBaseBearing, 17), label: "BASE_W" },
-    { id: "HOLD_IN_N", ...rel(0, 54), label: "HOLD_IN_N" },
-    { id: "HOLD_IN_NE", ...rel(45, 52), label: "HOLD_IN_NE" },
-    { id: "HOLD_IN_E", ...rel(90, 54), label: "HOLD_IN_E" },
-    { id: "HOLD_IN_SE", ...rel(135, 54), label: "HOLD_IN_SE" },
-    { id: "HOLD_IN_S", ...rel(180, 56), label: "HOLD_IN_S" },
-    { id: "HOLD_IN_SW", ...rel(225, 54), label: "HOLD_IN_SW" },
-    { id: "HOLD_IN_W", ...rel(270, 54), label: "HOLD_IN_W" },
-    { id: "HOLD_IN_NW", ...rel(315, 52), label: "HOLD_IN_NW" },
-    { id: "HOLD_N", ...rel(0, 78), label: "HOLD_OUT_N" },
-    { id: "HOLD_NE", ...rel(45, 74), label: "HOLD_OUT_NE" },
-    { id: "HOLD_E", ...rel(90, 78), label: "HOLD_OUT_E" },
-    { id: "HOLD_SE", ...rel(135, 76), label: "HOLD_OUT_SE" },
-    { id: "HOLD_S", ...rel(180, 82), label: "HOLD_OUT_S" },
-    { id: "HOLD_SW", ...rel(225, 76), label: "HOLD_OUT_SW" },
-    { id: "HOLD_W", ...rel(270, 78), label: "HOLD_OUT_W" },
-    { id: "HOLD_NW", ...rel(315, 74), label: "HOLD_OUT_NW" },
-    { id: "DPN1", ...rel(18, 14), label: "DPN1" },
-    { id: "DPN2", ...rel(18, 32), label: "DPN2" },
-    { id: "DPN", ...rel(18, 58), label: "DPN" },
-    { id: "DPE1", ...rel(70, 14), label: "DPE1" },
-    { id: "DPE2", ...rel(70, 34), label: "DPE2" },
-    { id: "DPE", ...rel(70, 58), label: "DPE" },
-    { id: "DPS1", ...rel(165, 14), label: "DPS1" },
-    { id: "DPS2", ...rel(165, 32), label: "DPS2" },
-    { id: "DPS", ...rel(165, 58), label: "DPS" },
-    { id: "DPW1", ...rel(295, 14), label: "DPW1" },
-    { id: "DPW2", ...rel(295, 34), label: "DPW2" },
-    { id: "DPW", ...rel(295, 58), label: "DPW" },
-    { id: "RJCJ", ...bearingToXY(285, 4.5), label: "RJCJ" },
-    { id: "RJCH", ...bearingToXY(212, 74), label: "RJCH" },
-    { id: "RJSM", ...bearingToXY(190, 96), label: "RJSM" },
-    { id: "MA1", ...rel(course, 8), label: "MA1" },
-    { id: "MAHOLD", ...rel(normHeading(course + 35), 17), label: "MAHOLD" },
-  ];
-}
-const navCache = new Map();
-function makeNavCached(runwayName) {
-  const key = runwayName || "01L";
-  if (!navCache.has(key)) navCache.set(key, makeNav(key));
-  return navCache.get(key);
-}
-function wp(nav, id) { return nav.find((w) => w.id === id); }
-function holdInboundCourse(fixId, runwayName = "01L") {
-  const pair = runwayPairName(runwayName);
-  const base = pair === "19" ? 190 : 10;
-  if (fixId.endsWith("_N")) return normHeading(base + 180);
-  if (fixId.endsWith("_S")) return base;
-  if (fixId.endsWith("_E")) return normHeading(base + 270);
-  if (fixId.endsWith("_W")) return normHeading(base + 90);
-  if (fixId.endsWith("_NE")) return normHeading(base + 225);
-  if (fixId.endsWith("_SE")) return normHeading(base + 315);
-  if (fixId.endsWith("_SW")) return normHeading(base + 45);
-  if (fixId.endsWith("_NW")) return normHeading(base + 135);
-  return base;
-}
-function holdPatternPoints(nav, fixId, runwayName = "01L") {
-  const c = wp(nav, fixId);
-  if (!c) return [];
-  const inbound = holdInboundCourse(fixId, runwayName);
-  const outbound = normHeading(inbound + 180);
-  const v = hdgVector(outbound);
-  const r = { x: -v.y, y: v.x };
-  const legNm = 5.2;
-  const halfNm = 1.65;
-  return [
-    { x: c.x + r.x * halfNm * PX_PER_NM, y: c.y + r.y * halfNm * PX_PER_NM, id: `${fixId}_IN` },
-    { x: c.x + v.x * legNm * PX_PER_NM + r.x * halfNm * PX_PER_NM, y: c.y + v.y * legNm * PX_PER_NM + r.y * halfNm * PX_PER_NM, id: `${fixId}_OUT_A` },
-    { x: c.x + v.x * legNm * PX_PER_NM - r.x * halfNm * PX_PER_NM, y: c.y + v.y * legNm * PX_PER_NM - r.y * halfNm * PX_PER_NM, id: `${fixId}_OUT_B` },
-    { x: c.x - r.x * halfNm * PX_PER_NM, y: c.y - r.y * halfNm * PX_PER_NM, id: `${fixId}_IN_B` },
-    { x: c.x + r.x * halfNm * PX_PER_NM, y: c.y + r.y * halfNm * PX_PER_NM, id: `${fixId}_IN` },
-  ];
-}
-function makeRoutes(runwayName) {
-  const pair = runwayPairName(runwayName);
-  return pair === "01"
-    ? { NORTH: ["IAF_N", "DW_W", "BASE_W", "IF01", "FAF"], EAST: ["IAF_E", "DW_E", "BASE_E", "IF01", "FAF"], WEST: ["IAF_W", "DW_W", "BASE_W", "IF01", "FAF"], SOUTH: ["IAF_S", "IF01", "FAF"], VECTORS_IF01: ["IF01", "FAF"], MISSED_RETURN: ["DW_E", "BASE_E", "IF01", "FAF"] }
-    : { NORTH: ["IAF_N", "IF01", "FAF"], EAST: ["IAF_E", "DW_E", "BASE_E", "IF01", "FAF"], WEST: ["IAF_W", "DW_W", "BASE_W", "IF01", "FAF"], SOUTH: ["IAF_S", "DW_E", "BASE_E", "IF01", "FAF"], VECTORS_IF01: ["IF01", "FAF"], MISSED_RETURN: ["DW_W", "BASE_W", "IF01", "FAF"] };
-}
-function makeSids(runwayName) {
-  return {
-    NORTH: { label: `${runwayName}_NORTH`, route: ["DPN1", "DPN2", "DPN"], heading: 18, initialAlt: 5000, topAlt: 14000, speed: 200, exitBearing: 18, exitFix: "DPN" },
-    EAST: { label: `${runwayName}_EAST`, route: ["DPE1", "DPE2", "DPE"], heading: 70, initialAlt: 6000, topAlt: 15000, speed: 200, exitBearing: 70, exitFix: "DPE" },
-    SOUTH: { label: `${runwayName}_SOUTH`, route: ["DPS1", "DPS2", "DPS"], heading: 165, initialAlt: 5000, topAlt: 12000, speed: 200, exitBearing: 165, exitFix: "DPS" },
-    WEST: { label: `${runwayName}_WEST`, route: ["DPW1", "DPW2", "DPW"], heading: 295, initialAlt: 6000, topAlt: 16000, speed: 200, exitBearing: 295, exitFix: "DPW" },
-  };
-}
-function suggestRouteForBearing(b) { if (b > 315 || b < 45) return "NORTH"; if (b < 135) return "EAST"; if (b < 225) return "SOUTH"; return "WEST"; }
-function suggestHoldForBearing(b) {
-  if (b < 30 || b >= 330) return "HOLD_IN_N";
-  if (b < 75) return "HOLD_IN_NE";
-  if (b < 120) return "HOLD_IN_E";
-  if (b < 165) return "HOLD_IN_SE";
-  if (b < 210) return "HOLD_IN_S";
-  if (b < 255) return "HOLD_IN_SW";
-  if (b < 300) return "HOLD_IN_W";
-  return "HOLD_IN_NW";
-}
-
-function pickWeightedSpawnRoute() {
-  const total = spawnRoutes.reduce((s, r) => s + (r.weight || 1), 0);
-  let roll = Math.random() * total;
-  for (const r of spawnRoutes) {
-    roll -= r.weight || 1;
-    if (roll <= 0) return r;
-  }
-  return spawnRoutes[0];
-}
-
-function makeEmptyAircraft() {
-  return {
-    id: "NO TARGET",
-    type: "-",
-    x: CENTER,
-    y: CENTER,
-    heading: 0,
-    speed: 0,
-    altitude: 0,
-    assignedHeading: 0,
-    assignedSpeed: 0,
-    assignedAltitude: 0,
-    speedRestriction: null,
-    mode: "NO_TARGET",
-    route: [],
-    routeIndex: 0,
-    hold: null,
-    clearedILS: false,
-    landed: false,
-    missed: false,
-    category: "ARR",
-    destination: "RJCC",
-    sid: null,
-    depState: null,
-    handedOff: false,
-    fuelMinutes: 0,
-    burnRate: 0,
-    trail: [],
-    color: "#64748b",
-  };
-}
-function makeAircraft(id, type, bearing, range, heading, speed, altitude, color = "#32ff4d") {
-  const p = perfFor(type);
-  const pos = bearingToXY(bearing, range), limitedSpeed = speed <= 0 ? 0 : clamp(speed, p.min, p.max);
-  return { id, type, x: pos.x, y: pos.y, heading, speed: limitedSpeed, altitude, assignedHeading: heading, assignedSpeed: limitedSpeed, assignedAltitude: altitude, speedRestriction: null, mode: "RADAR_CONTACT", route: [], routeIndex: 0, hold: null, clearedILS: false, landed: false, missed: false, category: "ARR", destination: "RJCC", sid: null, depState: null, handedOff: false, fuelMinutes: Math.round(35 + Math.random() * 55), trail: [], color };
-}
-function buildRouteAircraft(env, id, type, routeName, routeIndex, offset, altitude, speed) {
-  const route = env.routes[routeName], target = wp(env.nav, route[routeIndex]), prev = routeIndex > 0 ? wp(env.nav, route[routeIndex - 1]) : null;
-  const base = prev ? { x: prev.x + (target.x - prev.x) * offset, y: prev.y + (target.y - prev.y) * offset } : target;
-  const br = xyToBearingRange(base.x, base.y);
-  return { ...makeAircraft(id, type, br.bearing, br.rangeNm, headingToPoint(base.x, base.y, target), speed, altitude), x: base.x, y: base.y, mode: "ROUTE", route, routeIndex, routeRunway: env.runway.name, approachRunway: env.runway.name };
-}
-function buildFinalAircraft(env, id, type, dme, crossPx, altitude, speed) {
-  const p = runwayPointEnv(env, dme), right = { x: -hdgVector(env.runway.course).y, y: hdgVector(env.runway.course).x };
-  const x = p.x + right.x * crossPx, y = p.y + right.y * crossPx, br = xyToBearingRange(x, y);
-  return { ...makeAircraft(id, type, br.bearing, br.rangeNm, env.runway.course, speed, altitude, "#4de1ff"), x, y, mode: "ILS", clearedILS: true, assignedHeading: env.runway.course, routeRunway: env.runway.name, approachRunway: env.runway.name };
-}
-function buildRadarContact(id, type, sectorBearing, altitude, speed) {
-  const base = Number.isFinite(sectorBearing) ? (spawnRoutes.find((r) => Math.abs(shortestTurn(r.bearing, sectorBearing)) < 24) || pickWeightedSpawnRoute()) : pickWeightedSpawnRoute();
-  return makeAircraft(id, type, normHeading(base.bearing + Math.random() * 8 - 4), base.range + Math.random() * 2 - 1, base.heading, speed, altitude);
-}
-function randomType(idx) { return types[(idx * 3 + Math.floor(Math.random() * types.length)) % types.length]; }
-function makeInitialAircraft(env, depRunwayName = env.runway.name) {
-  const pool = [];
-  const finalDme = 7.5 + Math.random() * 5;
-  pool.push(buildFinalAircraft(env, `${callsigns[Math.floor(Math.random() * callsigns.length)]}${200 + Math.floor(Math.random() * 700)}`, randomType(0), finalDme, Math.random() * 24 - 12, Math.round(finalDme * 320 / 100) * 100, 145 + Math.random() * 25));
-
-  const routeNames = ["SOUTH", "SOUTH", "SOUTH", "WEST", "WEST", "NORTH", "EAST"];
-  const routeCount = 1 + Math.floor(Math.random() * 2);
-  for (let i = 0; i < routeCount; i++) {
-    const route = routeNames[Math.floor(Math.random() * routeNames.length)];
-    const routeDef = env.routes[route];
-    const routeIndex = clamp(1 + Math.floor(Math.random() * Math.max(1, routeDef.length - 2)), 0, routeDef.length - 1);
-    pool.push(buildRouteAircraft(env, `${callsigns[(i + 1 + Math.floor(Math.random() * callsigns.length)) % callsigns.length]}${100 + Math.floor(Math.random() * 800)}`, randomType(i + 1), route, routeIndex, 0.2 + Math.random() * 0.65, 4000 + Math.floor(Math.random() * 7) * 1000, 185 + Math.random() * 45));
-  }
-
-  const radarCount = Math.random() < 0.55 ? 1 : 0;
-  const sectors = [185, 185, 225, 285, 285, 330, 65];
-  for (let i = 0; i < radarCount; i++) {
-    pool.push(buildRadarContact(`${callsigns[(i + 4) % callsigns.length]}${100 + Math.floor(Math.random() * 800)}`, randomType(i + 4), sectors[Math.floor(Math.random() * sectors.length)], 8000 + Math.floor(Math.random() * 9) * 1000, 220 + Math.random() * 70));
-  }
-
-  if (Math.random() < 0.28 && pool.length < 4) pool.push(makeMilitary(80 + Math.floor(Math.random() * 40), pool, null, env));
-  if (Math.random() < 0.22 && pool.length < 4) pool.push(makeDeparture(30 + Math.floor(Math.random() * 30), env, depRunwayName));
-  return pool.slice(0, 4).map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
-}
-function makeScenarioInitialAircraft(env, scenarioId, depRunwayName = env.runway.name) {
-  if (scenarioId === "morning_flow") {
-    return [
-      buildFinalAircraft(env, "ANA739", "DH8D", 9.8, -5, 3000, 152),
-      buildRouteAircraft(env, "JAL214", "B738", "SOUTH", 1, 0.42, 7000, 205),
-      buildRouteAircraft(env, "ADO560", "A321", "WEST", 1, 0.30, 9000, 210),
-      makeDeparture(31, env, depRunwayName),
-      makeDeparture(32, env, depRunwayName),
-    ].map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
-  }
-  if (scenarioId === "wind_shift_19") {
-    return [
-      buildFinalAircraft(env, "SKY376", "B789", 11.5, 10, 3700, 160),
-      buildRouteAircraft(env, "ANA221", "B738", "SOUTH", 1, 0.28, 8000, 210),
-      buildRouteAircraft(env, "APJ718", "B738", "WEST", 1, 0.55, 10000, 232),
-      makeDeparture(41, env, depRunwayName),
-    ].map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
-  }
-  if (scenarioId === "snow_shower_final") {
-    return [
-      buildRouteAircraft(env, "JAL511", "B763", "SOUTH", 1, 0.35, 9000, 220),
-      buildRouteAircraft(env, "ANA774", "A320", "WEST", 1, 0.26, 7000, 205),
-      buildRadarContact("ADO246", "B738", 225, 12000, 250),
-      makeDeparture(51, env, depRunwayName),
-    ].map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
-  }
-  if (scenarioId === "winter_sar_front") {
-    const initial = [
-      buildRouteAircraft(env, "ANA861", "B772", "SOUTH", 1, 0.28, 11000, 235),
-      buildRadarContact("JAL303", "B738", 225, 12000, 245),
-    ];
-    const u125 = makeMilitary(171, initial, "U-125A", env);
-    const uh60 = makeMilitary(172, [...initial, u125], "UH-60J", env);
-    return [
-      ...initial,
-      { ...u125, altitude: 3500, assignedAltitude: 3500, speed: 190, assignedSpeed: 210, rjcjWestGatePassed: false },
-      { ...uh60, ...rjcjHelipadPoint(env), altitude: 0, assignedAltitude: 1000, speed: 0, assignedSpeed: 80, mode: "RJCJ_HELO_DEP", rjcjRunway: "HELIPAD", rjcjAirborne: false, rjcjWestGatePassed: false, heloGatePassed: false },
-      makeDeparture(61, env, depRunwayName),
-    ].map((a, idx) => ({ ...a, color: idx === 0 ? "#f6e94d" : a.color }));
-  }
-  return makeInitialAircraft(env, depRunwayName);
-}
-function makeRandomArrival(seq) {
-  const c = callsigns[seq % callsigns.length], t = types[(seq * 3) % types.length], base = pickWeightedSpawnRoute();
-  const id = `${c}${String(100 + ((seq * 47 + Math.floor(Math.random() * 300)) % 900))}`;
-  return makeAircraft(id, t, normHeading(base.bearing + Math.random() * 10 - 5), base.range + Math.random() * 3 - 1.5, base.heading, base.speed, base.altitude);
-}
+function aircraftFactoryDeps() { return { makeMilitary, makeDeparture, rjcjHelipadPoint }; }
 function makeIntruderMig31(env, seq = 0) {
   const start = bearingToXY(315, 95);
   const adiz = bearingToXY(315, 48);
   const base = makeAircraft(`FOXHOUND${31 + (seq % 6)}`, "A320", 315, 95, headingToPoint(start.x, start.y, adiz), 320, 31000, "#ef4444");
   return normalizeAircraftState({ ...base, id: `FOXHOUND${31 + (seq % 6)}`, type: "MiG-31", speed: 520, assignedSpeed: 520, maxSpeedOverride: 900 });
-}
-function foxhoundAdizArea() {
-  const center = bearingToXY(315, 48);
-  return { id: "ADIZ-NW", label: "JASDF ADIZ", x: center.x, y: center.y, heading: 315, lengthNm: 30, widthNm: 15, radiusNm: 9.5 };
-}
-function adizRectCorners(area = foxhoundAdizArea()) {
-  const v = hdgVector(area.heading || 315);
-  const r = { x: -v.y, y: v.x };
-  const hl = (area.lengthNm || 30) * PX_PER_NM / 2;
-  const hw = (area.widthNm || 15) * PX_PER_NM / 2;
-  return [
-    { x: area.x + v.x * hl + r.x * hw, y: area.y + v.y * hl + r.y * hw },
-    { x: area.x + v.x * hl - r.x * hw, y: area.y + v.y * hl - r.y * hw },
-    { x: area.x - v.x * hl - r.x * hw, y: area.y - v.y * hl - r.y * hw },
-    { x: area.x - v.x * hl + r.x * hw, y: area.y - v.y * hl + r.y * hw },
-  ];
-}
-function adizLocalCoordsNm(x, y, area = foxhoundAdizArea()) {
-  const v = hdgVector(area.heading || 315);
-  const r = { x: -v.y, y: v.x };
-  const dx = x - area.x;
-  const dy = y - area.y;
-  return {
-    alongNm: (dx * v.x + dy * v.y) / PX_PER_NM,
-    crossNm: (dx * r.x + dy * r.y) / PX_PER_NM,
-  };
-}
-function pointInAdizRect(x, y, area = foxhoundAdizArea()) {
-  const local = adizLocalCoordsNm(x, y, area);
-  return Math.abs(local.alongNm) <= (area.lengthNm || 30) / 2 && Math.abs(local.crossNm) <= (area.widthNm || 15) / 2;
-}
-function foxhoundDeepPenetration(ac, area = foxhoundAdizArea()) {
-  if (!pointInAdizRect(ac.x, ac.y, area)) return false;
-  const local = adizLocalCoordsNm(ac.x, ac.y, area);
-  return local.alongNm <= -2.0;
-}
-function distanceFromAdizCenterNm(ac, area = foxhoundAdizArea()) {
-  return Math.hypot(ac.x - area.x, ac.y - area.y) / PX_PER_NM;
-}
-function isFoxhound(ac) {
-  return ac?.type === "MiG-31" || ac?.mode === "FOXHOUND_INBOUND" || ac?.mode === "FOXHOUND_EGRESS" || ac?.mode === "FOXHOUND_FORMATION";
-}
-function isScenario05InterceptPair(a, b) {
-  const ids = new Set([a?.id, b?.id]);
-  const types = new Set([a?.type, b?.type]);
-  const modes = new Set([a?.mode, b?.mode]);
-  const eagleFoxhoundIds = ids.has("EAGLE01") && [...ids].some((id) => String(id || "").startsWith("FOXHOUND"));
-  const f15FoxhoundTypes = types.has("F-15J") && types.has("MiG-31");
-  const formationOrJoin = [...modes].some((m) => ["FOXHOUND_INBOUND", "FOXHOUND_FORMATION", "ADIZ_ESCORT", "RJCJ_DEP"].includes(m)) || a?.interceptPhase || b?.interceptPhase;
-  return (eagleFoxhoundIds || f15FoxhoundTypes) && formationOrJoin;
-}
-function scenario05InterceptPlan(f15, mig) {
-  const d = Math.hypot(f15.x - mig.x, f15.y - mig.y) / PX_PER_NM;
-  const migHdg = mig.heading || mig.assignedHeading || 135;
-  const migSpeed = mig.speed || mig.assignedSpeed || 520;
-  const migV = hdgVector(migHdg);
-  const migRight = { x: -migV.y, y: migV.x };
-  const relX = (f15.x - mig.x) / PX_PER_NM;
-  const relY = (f15.y - mig.y) / PX_PER_NM;
-  const alongNm = relX * migV.x + relY * migV.y;
-  const crossNm = relX * migRight.x + relY * migRight.y;
-  const side = 1;
-  let phase = "CUT_OFF";
-  let aim;
-  let assignedHeading;
-  let assignedSpeed;
-  let assignedAltitude = mig.altitude || 31000;
-
-  if (d > 24) {
-    phase = "CUT_OFF";
-    const leadNm = clamp(d * 0.42, 10, 22);
-    aim = {
-      x: mig.x + migV.x * leadNm * PX_PER_NM + migRight.x * side * 4.0 * PX_PER_NM,
-      y: mig.y + migV.y * leadNm * PX_PER_NM + migRight.y * side * 4.0 * PX_PER_NM,
-    };
-    assignedSpeed = f15.altitude < 10000 ? 520 : (f15.maxSpeedOverride || 880);
-    assignedAltitude = 32000;
-  } else if (d > 10) {
-    phase = "CONVERT";
-    const leadNm = clamp(d * 0.22, 3.5, 8.0);
-    aim = {
-      x: mig.x + migV.x * leadNm * PX_PER_NM + migRight.x * side * 2.6 * PX_PER_NM,
-      y: mig.y + migV.y * leadNm * PX_PER_NM + migRight.y * side * 2.6 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 210);
-  } else if (d > 5.5) {
-    phase = "REJOIN";
-    aim = {
-      x: mig.x - migV.x * 3.2 * PX_PER_NM + migRight.x * side * 1.45 * PX_PER_NM,
-      y: mig.y - migV.y * 3.2 * PX_PER_NM + migRight.y * side * 1.45 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 110);
-  } else if (d > 2.2) {
-    phase = "JOIN_STERN";
-    aim = {
-      x: mig.x - migV.x * 1.75 * PX_PER_NM + migRight.x * side * 0.9 * PX_PER_NM,
-      y: mig.y - migV.y * 1.75 * PX_PER_NM + migRight.y * side * 0.9 * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 35);
-  } else {
-    phase = "VISUAL_ID";
-    aim = {
-      x: mig.x - migV.x * 1.45 * PX_PER_NM + migRight.x * side * 0.75 * PX_PER_NM,
-      y: mig.y - migV.y * 1.45 * PX_PER_NM + migRight.y * side * 0.75 * PX_PER_NM,
-    };
-    assignedSpeed = migSpeed;
-  }
-
-  const overshot = alongNm > 1.8 && d < 10;
-  if (overshot) {
-    phase = "CONVERT";
-    aim = {
-      x: mig.x - migV.x * 2.2 * PX_PER_NM + migRight.x * side * (crossNm >= 0 ? 2.2 : 3.2) * PX_PER_NM,
-      y: mig.y - migV.y * 2.2 * PX_PER_NM + migRight.y * side * (crossNm >= 0 ? 2.2 : 3.2) * PX_PER_NM,
-    };
-    assignedSpeed = Math.min(f15.maxSpeedOverride || 880, migSpeed + 65);
-  }
-
-  assignedHeading = phase === "VISUAL_ID" ? migHdg : headingToPoint(f15.x, f15.y, aim);
-  return { phase, aim, assignedHeading, assignedSpeed, assignedAltitude, distanceNm: d, migHdg, migSpeed, alongNm, crossNm };
 }
 function makeFoxhoundIntruder(env, seq = 0) {
   const base = makeIntruderMig31(env, seq);
@@ -675,30 +249,6 @@ function makeScenario05Interceptor(env) {
     noCommandDelay: true,
     color: "#60a5fa"
   });
-}
-function adizEscortComplete(ac) {
-  if (!ac || ac.mode !== "ADIZ_ESCORT") return false;
-  const area = ac.adizArea || foxhoundAdizArea();
-  return !pointInAdizRect(ac.x, ac.y, area) && xyToBearingRange(ac.x, ac.y).rangeNm > 62;
-}
-function foxhoundEscortPatch(ac, env) {
-  const rjcj = wp(env.nav, "RJCJ") || bearingToXY(285, 4.5);
-  return {
-    type: "F-15J",
-    mode: "RJCJ_RTB",
-    category: "MIL",
-    destination: "RJCJ",
-    contact: "RJCJ",
-    assignedHeading: headingToPoint(ac.x, ac.y, rjcj),
-    assignedAltitude: 8000,
-    assignedSpeed: 320,
-    missionKind: "INTERCEPT_RTB",
-    interceptMerged: false,
-    escortingMig: null,
-    adizArea: null,
-    maxSpeedOverride: 750,
-    color: "#60a5fa"
-  };
 }
 function makeMilitary(seq, existing = [], forcedType = null, env = null) {
   const id = `${milCallsigns[seq % milCallsigns.length]}${String(10 + (seq * 7) % 80)}`;
@@ -960,32 +510,6 @@ function towerQueue(aircraft, env) {
   const pattern = aircraft.filter((a) => a.mode === "TWR_PATTERN" || a.mode === "VISUAL_APP");
   return { arrivals, departures, pattern };
 }
-function isFinalMode(mode) {
-  return mode === "FINAL" || mode === "FINAL_NO_CLEAR" || mode === "TWR_FINAL" || mode === "FINAL_LAND";
-}
-function isApproachMode(mode) {
-  return isFinalMode(mode) || mode === "ILS" || mode === "VISUAL_APP" || mode === "TWR_PATTERN";
-}
-function ilsAutoEligible(ac, mode = ac.mode) {
-  if (!ac || ac.category !== "ARR") return false;
-  if (mode === "ILS" || mode === "UNSTABLE_ILS" || isFinalMode(mode)) return true;
-  if (mode === "DIRECT_FIX") return ac.route?.[0] === "IF01" || ac.route?.[0] === "FAF";
-  if (mode === "ROUTE") {
-    const current = ac.route?.[ac.routeIndex || 0];
-    const previous = ac.route?.[Math.max(0, (ac.routeIndex || 0) - 1)];
-    return current === "FAF" || previous === "IF01";
-  }
-  return false;
-}
-function isAlternateMode(mode) {
-  return ["DIVERT", "ALT_HANDOFF", "ALT_ROLLOUT"].includes(mode);
-}
-function alternateHandoffRadiusNm(airportId) {
-  return airportId === "RJSM" ? 18 : 16;
-}
-function alternateHandoffLabel(airportId) {
-  return `${airportId} APP HANDOFF`;
-}
 function alternateHandoffState(ac, env) {
   const altAirport = ac.destination || ac.alternate || "RJCH";
   const apt = wp(env.nav, altAirport);
@@ -1096,22 +620,6 @@ function missedApproachReturnPatch(ac, env, afterMove = null) {
     color: "#32ff4d",
   };
 }
-function towerArrivalPatch(extra = {}) {
-  return { ...extra, towerControlled: true, contact: "TWR", towerPending: false, emergencyTowerAccepted: true };
-}
-function landingClearancePatch(ac) {
-  const approachMode = ac.mode === "UNSTABLE_ILS" ? "ILS" : ac.mode;
-  return {
-    ...ac,
-    towerControlled: true,
-    contact: "TWR",
-    towerPending: false,
-    emergencyTowerAccepted: true,
-    landingClearance: true,
-    mode: isFinalMode(approachMode) ? "FINAL" : approachMode,
-    approachRunway: ac.approachRunway || ac.routeRunway || ac.occupancyRunway,
-  };
-}
 function normalizeAircraftState(ac) {
   const fromMode = ac.previousMode || ac.lastMode || ac.mode;
   if (ac.category === "MIL" && ac.type === "F-15J" && ac.missionKind === "INTERCEPT" && ac.maxSpeedOverride >= 700) {
@@ -1142,36 +650,6 @@ function isValidTransition(fromMode, toMode) {
   if (!allowed) return true;
   return allowed.map(canonicalMode).includes(to);
 }
-function applyTowerAutomation(aircraft, env, towerAuto) {
-  const autoTowerHandoff = (a) => {
-    if (a.touchdown || a.mode === "ROLLOUT" || a.mode === "VACATED") return a;
-    if (a.category !== "ARR") return a;
-    if (isAlternateMode(a.mode)) return a;
-    const approachLike = a.clearedILS || a.landingClearance || isFinalMode(a.mode) || a.mode === "ILS" || a.mode === "UNSTABLE_ILS" || a.mode === "VISUAL_APP" || a.mode === "TWR_PATTERN";
-    const emergencyArrival = a.emergency || a.mode === "MAYDAY" || a.mode === "PANPAN";
-    const lowEnough = a.altitude <= (emergencyArrival ? 6000 : 3600);
-    if ((approachLike || emergencyArrival) && inTowerAirspace(a, env) && lowEnough && !a.towerControlled) {
-      return { ...a, towerControlled: true, contact: "TWR", towerPending: false, emergencyTowerAccepted: !!emergencyArrival || a.emergencyTowerAccepted };
-    }
-    return { ...a, towerPending: false };
-  };
-  const towered = aircraft.map(autoTowerHandoff);
-  if (!towerAuto) return towered;
-  return towered.map((a) => {
-    if (a.touchdown || a.mode === "ROLLOUT" || a.mode === "VACATED") return a;
-    if (a.category === "ARR" && a.towerControlled && a.contact === "TWR" && !a.landingClearance) {
-      const st = finalLandingState(a, env, 70, 900);
-      const rw = a.approachRunway || a.routeRunway || env.runway.name;
-      const runwayBusy = runwayOccupied(towered.filter((x) => x.id !== a.id), rw);
-      const onApproach = a.clearedILS || a.mode === "ILS" || a.mode === "UNSTABLE_ILS" || a.mode === "VISUAL_APP" || a.mode === "TWR_PATTERN" || isFinalMode(a.mode);
-      if (!runwayBusy && onApproach && st.geo.alongNm < 7.0 && st.geo.alongNm > 0.25 && Math.abs(st.geo.crossPx) < 120 && a.speed < approachSpeedFor(a) + 110) return landingClearancePatch(a);
-      if (onApproach && a.altitude < 500 && st.geo.alongNm < 0.15 && !a.landingClearance) {
-        return { ...a, touchdown: false, runwayOccupancy: false, occupancyRunway: null, towerControlled: false, contact: "DEP", category: "DEP", depState: "MISSED_APP", mode: "MISSED_APP", route: ["MA1", "MAHOLD"], routeIndex: 0, missed: true, clearedILS: false, landingClearance: false, assignedHeading: env.runway.course, assignedAltitude: 3000, assignedSpeed: 180, speedRestriction: 200, color: "#ff9f43" };
-      }
-    }
-    return a;
-  });
-}
 function displayMode(a) {
   if (a.category === "MIL" && a.mode === "RJCJ_DEP" && a.altitude < 80 && a.speed > 30) return "RJCJ TAKEOFF ROLL";
   if (a.category === "MIL" && a.mode === "RJCJ_DEP" && a.altitude < 80 && a.speed <= 30) return "RJCJ READY";
@@ -1191,45 +669,6 @@ function displayMode(a) {
     return `${a.mode} / TWR`;
   }
   return a.mode;
-}
-function wrongRunwayTailwindMiss(ac, env) {
-  if (ac.touchdown || ac.mode === "ROLLOUT" || ac.mode === "VACATED" || isAlternateMode(ac.mode)) return false;
-  return (
-    !ac.landingClearance &&
-    (ac.clearedILS || ac.mode === "VISUAL_APP" || isFinalMode(ac.mode)) &&
-    runwayHeadwind(env.wind, approachRunwayForAircraft(ac, env).course) < -5 &&
-    ac.altitude < 500
-  );
-}
-function approachRunwayForAircraft(ac, env) {
-  return RUNWAYS[ac.approachRunway || ac.routeRunway || ac.occupancyRunway || env.runway.name] || env.runway;
-}
-function approachRunwayLocked(ac) {
-  if (!ac || ac.category !== "ARR" || ac.touchdown || ac.landed || ac.handedOff || isAlternateMode(ac.mode)) return false;
-  if (ac.clearedILS || ac.landingClearance || ac.towerControlled || ac.towerPending) return true;
-  return ["ROUTE", "DIRECT_FIX", "ILS", "UNSTABLE_ILS", "VISUAL_APP", "TWR_PATTERN", "FINAL", "FINAL_NO_CLEAR", "TWR_FINAL", "FINAL_LAND"].includes(ac.mode);
-}
-function approachRunwayChangeRequiresMissed(ac, targetRunway) {
-  if (!approachRunwayLocked(ac)) return false;
-  const current = ac.approachRunway || ac.routeRunway || ac.occupancyRunway;
-  return !!current && !!targetRunway && current !== targetRunway;
-}
-function finalGeometryForAircraft(ac, env, x = ac.x, y = ac.y) {
-  const rw = approachRunwayForAircraft(ac, env);
-  return finalGeometryAt(runwayOrigin(rw), rw.course, x, y);
-}
-function runwayPointForAircraft(ac, env, dme) {
-  const rw = approachRunwayForAircraft(ac, env);
-  return runwayPointAt(runwayOrigin(rw), rw.course, dme);
-}
-function finalLandingState(ac, env, crossLimit = 32, altLimit = 220) {
-  const rw = approachRunwayForAircraft(ac, env);
-  const geo = finalGeometryAt(runwayOrigin(rw), rw.course, ac.x, ac.y);
-  const stable = Math.abs(geo.crossPx) < Math.max(crossLimit, 48) && Math.abs(shortestTurn(ac.heading, rw.course)) < 65 && ac.speed < approachSpeedFor(ac) + 105 && env.tailwind <= 10;
-  const touchdownZone = geo.alongNm < 0.65 && geo.alongNm > -2.2;
-  const atThreshold = touchdownZone && ac.altitude < Math.max(altLimit, 900);
-  const overrun = geo.alongNm < -2.4 && ac.altitude < 900;
-  return { geo, stable, atThreshold, overrun, runway: rw };
 }
 function rolloutPatch(ac, env, nextFuelMinutes, burnRate, emergency, spd, point, trailPoint, runwayName = null) {
   const rw = RUNWAYS[runwayName || ac.approachRunway || ac.routeRunway || ac.occupancyRunway || env.runway.name] || env.runway;
@@ -2048,7 +1487,7 @@ export default function ATCRadarSimulator() {
     const initArr = defaultArrRunwayForPair(initPair);
     const initDep = defaultDepRunwayForPair(initPair);
     const initEnv = { runway: RUNWAYS[initArr], nav: makeNavCached(initArr), routes: makeRoutes(initArr), sids: makeSids(initArr), wind: initWind, headwind: runwayHeadwind(initWind, RUNWAYS[initArr].course), tailwind: Math.max(0, -runwayHeadwind(initWind, RUNWAYS[initArr].course)), weatherOn: true, weatherCells: makeWeatherCells(0, Math.random()), airports: { RJCJ: activeAirportRunway("RJCJ", initWind), RJCH: activeAirportRunway("RJCH", initWind), RJSM: activeAirportRunway("RJSM", initWind) } };
-    return makeInitialAircraft(initEnv, initDep).map(normalizeAircraftState);
+    return makeInitialAircraft(initEnv, initDep, aircraftFactoryDeps()).map(normalizeAircraftState);
   });
   const [radarTargets, setRadarTargets] = useState([]);
   const [radarLastSweepTick, setRadarLastSweepTick] = useState(0);
@@ -2203,7 +1642,7 @@ export default function ATCRadarSimulator() {
         let landedNow = 0, moved = prev;
         for (let i = 0; i < timeScale; i++) moved = moved.map((a) => { const n = normalizeAircraftState(aircraftStep(a, env)); if (!a.touchdown && n.touchdown) landedNow++; return n; });
         if (landedNow) { setLandedCount((c) => c + landedNow); setLog((old) => [`Tower: ${landedNow} aircraft touchdown RWY ${env.runway.name}, rollout.`, ...old].slice(0, 14)); }
-        moved = applyTowerAutomation(moved, env, towerAuto).map(normalizeAircraftState);
+        moved = applyTowerAutomation(moved, env, towerAuto, { finalLandingState, inTowerAirspace, runwayOccupied }).map(normalizeAircraftState);
         return moved.filter((a) => {
           if (a.landed || a.handedOff) return false;
           const br = xyToBearingRange(a.x, a.y);
@@ -2631,7 +2070,7 @@ export default function ATCRadarSimulator() {
     }
     setAircraft((prev) => prev.map((a) => a.id === targetId ? normalizeAircraftState({ ...a, ...patch, color: (patch.category ?? a.category) === "DEP" ? "#c084fc" : patch.category === "MIL" || a.category === "MIL" ? "#60a5fa" : "#f6e94d" }) : a));
   }
-  function appReacquirePatch(extra = {}) { return selected.depState === "MISSED_APP" || selected.mode === "MISSED_APP" || selected.mode === "MISSED_TRANSFER_APP" ? { category: "ARR", destination: "RJCC", sid: null, depState: null, missed: false, clearedILS: false, ...extra } : extra; }
+  function appReacquirePatch(extra = {}) { return buildAppReacquirePatch(selected, extra); }
   function applyVectorHeading(h) {
     if (selected.category === "MIL") {
       setLog((p) => [`RJCC ${seat}: no authority to vector ${selected.id}. RJCJ tactical traffic is protected by mission corridor only.`, ...p].slice(0, 14));
@@ -2763,7 +2202,7 @@ export default function ATCRadarSimulator() {
       setDepRunways([initDep]);
       setClosedRunways([]);
       const initEnv = { runway: RUNWAYS[initArr], nav: makeNavCached(initArr), routes: makeRoutes(initArr), sids: makeSids(initArr), wind: initWind, headwind: runwayHeadwind(initWind, RUNWAYS[initArr].course), tailwind: Math.max(0, -runwayHeadwind(initWind, RUNWAYS[initArr].course)), weatherOn: true, weatherCells: makeWeatherCells(0, nextSeed), airports: { RJCJ: activeAirportRunway("RJCJ", initWind), RJCH: activeAirportRunway("RJCH", initWind), RJSM: activeAirportRunway("RJSM", initWind) } };
-      const nextAircraft = makeInitialAircraft(initEnv, initDep).map(normalizeAircraftState);
+      const nextAircraft = makeInitialAircraft(initEnv, initDep, aircraftFactoryDeps()).map(normalizeAircraftState);
       setAircraft(nextAircraft);
       setRadarTargets(nextAircraft.map((a) => ({ ...a, radarSweepTick: 0 })));
       setRadarLastSweepTick(0);
@@ -2790,7 +2229,7 @@ export default function ATCRadarSimulator() {
     setTowerAuto(sc.towerAuto ?? false);
     const scenarioWind = parseWind(sc.wind || "350/08");
     const scenarioEnv = { runway: RUNWAYS[sc.arrRunway || "01L"], nav: makeNavCached(sc.arrRunway || "01L"), routes: makeRoutes(sc.arrRunway || "01L"), sids: makeSids(sc.arrRunway || "01L"), wind: scenarioWind, headwind: runwayHeadwind(scenarioWind, RUNWAYS[sc.arrRunway || "01L"].course), tailwind: Math.max(0, -runwayHeadwind(scenarioWind, RUNWAYS[sc.arrRunway || "01L"].course)), weatherOn: !!sc.weatherOn, weatherCells: makeWeatherCells(0, sc.weatherSeed ?? 0.12), airports: { RJCJ: activeAirportRunway("RJCJ", scenarioWind), RJCH: activeAirportRunway("RJCH", scenarioWind), RJSM: activeAirportRunway("RJSM", scenarioWind) } };
-    const nextAircraft = withSeededRandom(sc.seed || sc.id, () => makeScenarioInitialAircraft(scenarioEnv, sc.id, sc.depRunway || "01R").map(normalizeAircraftState));
+    const nextAircraft = withSeededRandom(sc.seed || sc.id, () => makeScenarioInitialAircraft(scenarioEnv, sc.id, sc.depRunway || "01R", aircraftFactoryDeps()).map(normalizeAircraftState));
     setSeq(6);
     setAircraft(nextAircraft);
     setRadarTargets(nextAircraft.map((a) => ({ ...a, radarSweepTick: 0 })));
@@ -2799,7 +2238,7 @@ export default function ATCRadarSimulator() {
     setLog([`${sc.title}: scenario loaded.`, `Initial runway plan: ${scenarioBothRunways.join("/")} BOTH. Objective: maintain safe traffic flow, avoid conflicts, and complete runway/arrival tasks.`]);
   }
   function backToMainMenu() { setRunning(false); setStartScreen(true); setMouseVectorMode(false); setVectorPreview(null); }
-  function reset() { if (gameMode === "SCENARIO" || gameMode === "DEBUG") { const sc = SCENARIOS.find((s) => s.id === scenarioId) || SCENARIOS.find((s) => s.kind === gameMode) || SCENARIOS[1]; startMode(sc); return; } setRunning(false); setWeatherTick(0); const nextSeed = Math.random(); const nextWindOffset = Math.random() * 120; setWeatherSeed(nextSeed); setWindOffset(nextWindOffset); const resetWind = generatedWind(nextWindOffset); const resetPair = runwayHeadwind(resetWind, 10) >= runwayHeadwind(resetWind, 190) ? "01" : "19"; const resetArr = defaultArrRunwayForPair(resetPair); const resetDep = dualRunway ? defaultDepRunwayForPair(resetPair) : resetArr; if (runwayMode === "AUTO") { setActiveRunway(resetArr); setDepRunway(resetDep); setArrRunways([resetArr]); setDepRunways([resetDep]); setClosedRunways([]); } const resetEnv = { runway: RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway], nav: makeNavCached(runwayMode === "AUTO" ? resetArr : activeRunway), routes: makeRoutes(runwayMode === "AUTO" ? resetArr : activeRunway), sids: makeSids(runwayMode === "AUTO" ? resetArr : activeRunway), wind: resetWind, headwind: runwayHeadwind(resetWind, RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway].course), tailwind: Math.max(0, -runwayHeadwind(resetWind, RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway].course)), weatherOn, weatherCells: makeWeatherCells(0, nextSeed), airports: { RJCJ: activeAirportRunway("RJCJ", resetWind), RJCH: activeAirportRunway("RJCH", resetWind), RJSM: activeAirportRunway("RJSM", resetWind) } }; const nextAircraft = makeInitialAircraft(resetEnv, runwayMode === "AUTO" ? resetDep : depRunway); setAircraft(nextAircraft.map(normalizeAircraftState)); setRadarTargets(nextAircraft.map(normalizeAircraftState).map((a) => ({ ...a, radarSweepTick: 0 }))); setRadarLastSweepTick(0); setSelectedId(nextAircraft[0]?.id || ""); setLandedCount(0); setHandoffCount(0); setSeq(6 + Math.floor(Math.random() * 30)); setTick(0); setRealTick(0); setWeatherTick(0); setLastDepTick(-999); setLastMilTick(-999); setLog([`CHITOSE: reset. Wind ${fmt3(resetWind.dir)}/${resetWind.speed}. ARR RWY ${runwayMode === "AUTO" ? resetArr : activeRunway}, DEP RWY ${runwayMode === "AUTO" ? resetDep : depRunway}. New traffic and weather loaded.`]); }
+  function reset() { if (gameMode === "SCENARIO" || gameMode === "DEBUG") { const sc = SCENARIOS.find((s) => s.id === scenarioId) || SCENARIOS.find((s) => s.kind === gameMode) || SCENARIOS[1]; startMode(sc); return; } setRunning(false); setWeatherTick(0); const nextSeed = Math.random(); const nextWindOffset = Math.random() * 120; setWeatherSeed(nextSeed); setWindOffset(nextWindOffset); const resetWind = generatedWind(nextWindOffset); const resetPair = runwayHeadwind(resetWind, 10) >= runwayHeadwind(resetWind, 190) ? "01" : "19"; const resetArr = defaultArrRunwayForPair(resetPair); const resetDep = dualRunway ? defaultDepRunwayForPair(resetPair) : resetArr; if (runwayMode === "AUTO") { setActiveRunway(resetArr); setDepRunway(resetDep); setArrRunways([resetArr]); setDepRunways([resetDep]); setClosedRunways([]); } const resetEnv = { runway: RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway], nav: makeNavCached(runwayMode === "AUTO" ? resetArr : activeRunway), routes: makeRoutes(runwayMode === "AUTO" ? resetArr : activeRunway), sids: makeSids(runwayMode === "AUTO" ? resetArr : activeRunway), wind: resetWind, headwind: runwayHeadwind(resetWind, RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway].course), tailwind: Math.max(0, -runwayHeadwind(resetWind, RUNWAYS[runwayMode === "AUTO" ? resetArr : activeRunway].course)), weatherOn, weatherCells: makeWeatherCells(0, nextSeed), airports: { RJCJ: activeAirportRunway("RJCJ", resetWind), RJCH: activeAirportRunway("RJCH", resetWind), RJSM: activeAirportRunway("RJSM", resetWind) } }; const nextAircraft = makeInitialAircraft(resetEnv, runwayMode === "AUTO" ? resetDep : depRunway, aircraftFactoryDeps()); setAircraft(nextAircraft.map(normalizeAircraftState)); setRadarTargets(nextAircraft.map(normalizeAircraftState).map((a) => ({ ...a, radarSweepTick: 0 }))); setRadarLastSweepTick(0); setSelectedId(nextAircraft[0]?.id || ""); setLandedCount(0); setHandoffCount(0); setSeq(6 + Math.floor(Math.random() * 30)); setTick(0); setRealTick(0); setWeatherTick(0); setLastDepTick(-999); setLastMilTick(-999); setLog([`CHITOSE: reset. Wind ${fmt3(resetWind.dir)}/${resetWind.speed}. ARR RWY ${runwayMode === "AUTO" ? resetArr : activeRunway}, DEP RWY ${runwayMode === "AUTO" ? resetDep : depRunway}. New traffic and weather loaded.`]); }
   function spawnMil() {
     if (aircraft.length >= MAX_TARGETS) return setLog((p) => [`Sector saturated: maximum ${MAX_TARGETS} active targets.`, ...p].slice(0, 14));
     const next = makeMilitary(seq + 90, aircraft, null, env);
@@ -3404,47 +2843,42 @@ export default function ATCRadarSimulator() {
                 <g pointerEvents="none"><rect x="620" y="16" width="252" height="108" fill="#020617" opacity="0.72" stroke="#1f2937" rx="10" /><text x="634" y="36" fill="#f6e94d" fontSize="13" fontWeight="800">{selected.id} SELECTED</text><text x="634" y="55" fill="#cbd5e1" fontSize="11">BRG {fmt3(selectedBR.bearing)} / {selectedBR.rangeNm.toFixed(1)}NM | HDG {fmt3(selected.heading)}</text><text x="634" y="73" fill="#cbd5e1" fontSize="11">ALT {fmtFL(selected.altitude)} → {fmtFL(selected.assignedAltitude)} | SPD {Math.round(selected.speed)}</text><text x="634" y="91" fill="#cbd5e1" fontSize="11">FUEL {Math.round(selected.fuelMinutes ?? 0)} | BURN {(selected.burnRate ?? 1).toFixed(1)} | {selected.category}</text><text x="634" y="109" fill="#cbd5e1" fontSize="11">{modeText(selected)}</text></g>
               </svg> : null}
               <svg ref={svgRef} viewBox={viewBox} onClick={handleRadarClick} onMouseDown={handleRadarMouseDown} onMouseMove={handleRadarMouseMove} onMouseUp={stopRadarPan} onMouseLeave={(e) => { stopRadarPan(); if (mouseVectorMode) setVectorPreview(null); }} onWheel={handleRadarWheel} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", fontFamily: "monospace", cursor: mouseVectorMode ? "crosshair" : radarView.panning ? "grabbing" : "default", opacity: scopeMode === "RADAR" ? 1 : 0, pointerEvents: scopeMode === "RADAR" ? "auto" : "none" }}>
-                <rect x="0" y="0" width="720" height="720" fill="#061306" />
-                {weatherOn ? env.weatherCells.map((c) => <g key={c.id}>{weatherTiles(c).map((t, idx) => <rect key={`${c.id}-${idx}`} x={t.x} y={t.y} width={t.size} height={t.size} fill={c.level === "RED" ? "#ef4444" : "#facc15"} opacity={t.opacity} />)}<text x={c.x} y={c.y} fill={c.level === "RED" ? "#fecaca" : "#fef3c7"} fontSize={10 / zoom} textAnchor="middle">{c.id} {Math.round(c.baseAlt ?? 0)}-{Math.round(c.topAlt ?? 60000)}FT</text></g>) : null}
-                {[10, 20, 30, 40, 50, 60, 80, 100].map((r) => <circle key={r} cx={CENTER} cy={CENTER} r={r * PX_PER_NM} fill="none" stroke="#0d5016" strokeWidth="1" opacity="0.7" />)}
-                <line x1="0" y1={CENTER} x2="720" y2={CENTER} stroke="#0d5016" strokeWidth="1" opacity="0.65" />
-                <line x1={CENTER} y1="0" x2={CENTER} y2="720" stroke="#0d5016" strokeWidth="1" opacity="0.65" />
-                {[20, 40, 60, 80, 100].map((r) => <text key={r} x={CENTER + r * PX_PER_NM - 12} y={CENTER + 6} fill="#148a25" fontSize="12">{r}nm</text>)}
-                <text x={viewCenter.x - viewSize / 2 + 18 / zoom} y={viewCenter.y - viewSize / 2 + 26 / zoom} fill="#32ff4d" fontSize={14 / zoom} fontWeight="700">CHITOSE {seat} RWY {activeRunway}</text>
-                <text x={viewCenter.x - viewSize / 2 + 18 / zoom} y={viewCenter.y - viewSize / 2 + 48 / zoom} fill="#148a25" fontSize={12 / zoom}>WIND {fmt3(windObj.dir)}/{windObj.speed} QNH {qnh} | SWEEP {RADAR_SWEEP_SECONDS}s AGE {radarSweepAgeSec.toFixed(1)}s</text>
-                {snowRemovalNotice ? <text x={viewCenter.x - viewSize / 2 + 18 / zoom} y={viewCenter.y - viewSize / 2 + 72 / zoom} fill="#f59e0b" fontSize={15 / zoom} fontWeight="900">{snowRemovalNotice}</text> : null}
-                {rjcjPriorityNotice ? (() => { const color = rjcjPriorityNotice.level === "FAIL" ? "#ef4444" : rjcjPriorityNotice.level === "DANGER" ? "#f97316" : rjcjPriorityNotice.level === "WARN" ? "#facc15" : rjcjPriorityNotice.level === "DONE" ? "#22c55e" : "#38bdf8"; const x = viewCenter.x - 238 / zoom; const y = viewCenter.y - viewSize / 2 + 82 / zoom; return <g key="radar-rjcj-priority" pointerEvents="none"><rect x={x} y={y} width={476 / zoom} height={62 / zoom} rx={12 / zoom} fill="#020617" opacity="0.92" stroke={color} strokeWidth={2.4 / Math.sqrt(zoom)} /><text x={viewCenter.x} y={y + 23 / zoom} textAnchor="middle" fill={color} fontSize={18 / zoom} fontWeight="950">{rjcjPriorityNotice.title}</text><text x={viewCenter.x} y={y + 46 / zoom} textAnchor="middle" fill="#e5e7eb" fontSize={12.5 / zoom} fontWeight="800">{rjcjPriorityNotice.body}</text></g>; })() : null}
+                <RangeRingsOverlay />
+                <WeatherOverlay weatherOn={weatherOn} weatherCells={env.weatherCells} zoom={zoom} />
+                <RadarHeaderOverlay
+                  viewCenter={viewCenter}
+                  viewSize={viewSize}
+                  zoom={zoom}
+                  seat={seat}
+                  activeRunway={activeRunway}
+                  windObj={windObj}
+                  qnh={qnh}
+                  radarSweepAgeSec={radarSweepAgeSec}
+                  snowRemovalNotice={snowRemovalNotice}
+                  rjcjPriorityNotice={rjcjPriorityNotice}
+                  fmt3={fmt3}
+                />
                 {rjccRunwayDisplaySet().map((set) => renderMainRunwayIlsOverlay(set.runway, set.role))}
-                {rjccRunwayDisplaySet().map(({ runway: rw, role }) => { const pts = runwayPolygonPoints(rw, CENTER, CENTER, 1, RJCC_RUNWAY_VISUAL_NM, 3).map((p) => `${p.x},${p.y}`).join(" "); const color = role === "CURRENT" ? "#22c55e" : role === "BOTH" ? "#84cc16" : role === "DEP" ? "#a855f7" : role === "PENDING" ? "#f59e0b" : role === "CLOSED" ? "#ef4444" : "#38bdf8"; return <polygon key={`radar-rwy-${rw}`} points={pts} fill={color} opacity={role === "CURRENT" ? "0.30" : role === "BOTH" ? "0.25" : role === "DEP" ? "0.20" : role === "PENDING" ? "0.18" : role === "CLOSED" ? "0.08" : "0.10"} stroke={color} strokeWidth={role === "CURRENT" ? "1.45" : "1.05"} />; })}
-                {["RJCJ", "RJCH", "RJSM"].filter(showAirportIls).map((id) => { const apt = wp(env.nav, id); const pad = id === "RJCJ" ? rjcjHelipadPoint(env) : null; const rwys = id === "RJCJ" ? AIRPORT_RUNWAYS.RJCJ : [id === "RJCH" ? { name: "12", course: 120 } : id === "RJSM" ? { name: "10", course: 100 } : env.airports[id]]; return <g key={`apt-${id}`}>{id === "RJCJ" && pad ? <g key="rjcj-helipad-west"><circle cx={pad.x} cy={pad.y} r={4 / Math.sqrt(zoom)} fill="none" stroke="#60a5fa" strokeWidth={1.4 / Math.sqrt(zoom)} opacity="0.92" /><text x={pad.x - 42 / zoom} y={pad.y - 7 / zoom} fill="#60a5fa" fontSize={9 / zoom} opacity="0.9">RJCJ HELIPAD W</text></g> : null}{rwys.map((activeAptRunway) => { const course = activeAptRunway?.course ?? (id === "RJCJ" ? 180 : id === "RJCH" ? 120 : 100); const rv = hdgVector(course); const rr = { x: -rv.y, y: rv.x }; const ils = ilsBoundaryLines(apt, course, 4, 12, 6, 18); const isActive = id !== "RJCJ" || activeAptRunway.name === env.airports.RJCJ.name; const color = isActive ? "#22c55e" : "#38bdf8"; return <g key={`apt-${id}-${activeAptRunway.name}`}><polygon points={ptsString(ils.polygon)} fill={color} opacity={isActive ? "0.045" : "0.025"} stroke="none" /><polyline points={ptsString(ils.left)} fill="none" stroke={color} strokeWidth="1" strokeDasharray={isActive ? "4 5" : "9 6"} opacity={isActive ? "0.72" : "0.42"} /><polyline points={ptsString(ils.right)} fill="none" stroke={color} strokeWidth="1" strokeDasharray={isActive ? "4 5" : "9 6"} opacity={isActive ? "0.72" : "0.42"} /><line x1={apt.x - rr.x * 3} y1={apt.y - rr.y * 3} x2={apt.x + rr.x * 3} y2={apt.y + rr.y * 3} stroke="#9ca3af" strokeWidth="6" opacity={isActive ? "0.45" : "0.22"} /><line x1={apt.x - rv.x * OTHER_RUNWAY_VISUAL_NM * PX_PER_NM} y1={apt.y - rv.y * OTHER_RUNWAY_VISUAL_NM * PX_PER_NM} x2={apt.x + rv.x * OTHER_RUNWAY_VISUAL_NM * PX_PER_NM} y2={apt.y + rv.y * OTHER_RUNWAY_VISUAL_NM * PX_PER_NM} stroke={color} strokeWidth="2.6" opacity={isActive ? "0.95" : "0.52"} /><text x={apt.x + 8 / zoom} y={apt.y + (activeAptRunway.name === "36" ? 12 : -8) / zoom} fill={color} fontSize={10 / zoom}>{id === "RJCJ" ? `RJCJ RWY ${activeAptRunway.name}${isActive ? " ACTIVE" : ""}` : `${id} RWY ${activeAptRunway?.name || "-"} ILS`}</text></g>; })}</g>; })}
-                {["RJCH", "RJSM"].map((id) => {
-                  const apt = wp(env.nav, id);
-                  if (!apt) return null;
-                  const radiusNm = alternateHandoffRadiusNm(id);
-                  const activeDivert = aircraft.some((a) => !a.handedOff && !a.landed && (a.destination === id || a.alternate === id));
-                  const color = activeDivert ? "#f59e0b" : "#38bdf8";
-                  return <g key={`radar-alt-handoff-${id}`} pointerEvents="none">
-                    <circle cx={apt.x} cy={apt.y} r={radiusNm * PX_PER_NM} fill="none" stroke={color} strokeWidth={1.5 / Math.sqrt(zoom)} strokeDasharray="10 7" opacity={activeDivert ? "0.90" : "0.45"} />
-                    <circle cx={apt.x} cy={apt.y} r={2.8 / Math.sqrt(zoom)} fill={color} opacity="0.85" />
-                    <text x={apt.x + 10 / zoom} y={apt.y + radiusNm * PX_PER_NM + 13 / zoom} fill={color} fontSize={11 / zoom} opacity={activeDivert ? "0.96" : "0.70"}>{alternateHandoffLabel(id)} {radiusNm}NM</text>
-                  </g>;
-                })}
-                {activeCorridors.map((c) => {
-                  if (c.kind === "AREA") return <g key={`radar-corridor-${c.id}`} pointerEvents="none"><circle cx={c.end.x} cy={c.end.y} r={c.controlRadiusNm * PX_PER_NM} fill={c.color} opacity="0.070" stroke={c.color} strokeWidth={1.8 / Math.sqrt(zoom)} strokeDasharray="5 5" /><text x={c.end.x + 8 / zoom} y={c.end.y + 14 / zoom} fill={c.color} fontSize={10 / zoom} opacity="0.95">{c.aircraftId} CONTROL AREA {c.areaId}</text></g>;
-                  const poly = corridorPolygonPoints(c);
-                  return <g key={`radar-corridor-${c.id}`} pointerEvents="none"><polygon points={ptsString(poly)} fill={c.color} opacity="0.090" stroke={c.color} strokeWidth={1.7 / Math.sqrt(zoom)} strokeDasharray="12 7" /><line x1={c.start.x} y1={c.start.y} x2={c.end.x} y2={c.end.y} stroke={c.color} strokeWidth={1.8 / Math.sqrt(zoom)} opacity="0.76" strokeDasharray="8 7" /><circle cx={c.position.x} cy={c.position.y} r={c.widthNm * PX_PER_NM} fill={c.color} opacity="0.060" stroke={c.color} strokeWidth={1.2 / Math.sqrt(zoom)} /><text x={(c.start.x + c.end.x) / 2 + 8 / zoom} y={(c.start.y + c.end.y) / 2 - 8 / zoom} fill={c.color} fontSize={11 / zoom} opacity="0.96">{c.aircraftId} MOVING CORRIDOR</text></g>;
-                })}
-                {displayedMissionAreas(aircraft).map((area) => { const p = missionAreaPoint(area); const color = area.dynamic ? "#f59e0b" : "#60a5fa"; return <g key={`radar-mission-${area.id}`}><circle cx={p.x} cy={p.y} r={area.radiusNm * PX_PER_NM} fill={color} opacity="0.055" stroke={color} strokeWidth={1.4 / Math.sqrt(zoom)} strokeDasharray="7 6" /><circle cx={p.x} cy={p.y} r={2.5 / Math.sqrt(zoom)} fill={color} opacity="0.85" /><text x={p.x + 8 / zoom} y={p.y - 8 / zoom} fill={color} fontSize={11 / zoom} opacity="0.95">{area.id} {area.label}</text></g>; })}
+                <RadarRunwayOverlay runwayDisplaySet={rjccRunwayDisplaySet()} />
+                <AirportOverlay env={env} zoom={zoom} showAirportIls={showAirportIls} rjcjHelipadPoint={rjcjHelipadPoint} />
+                <AlternateHandoffOverlay aircraft={aircraft} env={env} zoom={zoom} alternateHandoffRadiusNm={alternateHandoffRadiusNm} alternateHandoffLabel={alternateHandoffLabel} />
+                <MissionOverlay activeCorridors={activeCorridors} aircraft={aircraft} scenarioId={scenarioId} scenarioEventsDone={scenarioEventsDone} zoom={zoom} lang={lang} />
                 {rjccRunwayDisplaySet().filter((set) => ["CURRENT", "ARR", "BOTH", "PENDING"].includes(set.role)).map((set) => renderApproachGuide(set.runway, set.role))}
-                {Object.entries(env.sids).map(([name, sid]) => <polyline key={name} points={[{ x: CENTER, y: CENTER }, ...sid.route.map((id) => wp(env.nav, id)).filter(Boolean)].map((w) => `${w.x},${w.y}`).join(" ")} fill="none" stroke="#a855f7" strokeWidth="1" opacity="0.28" strokeDasharray="3 6" />)}
-                {env.nav.filter((w) => w.id.startsWith("HOLD_")).map((w) => {
-                  const inner = w.id.startsWith("HOLD_IN_");
-                  return <polyline key={`radar-hold-${w.id}`} points={ptsString(holdPatternPoints(env.nav, w.id, activeRunway))} fill="none" stroke="#f59e0b" strokeWidth={(inner ? 1.25 : 1.05) / Math.sqrt(zoom)} opacity={inner ? "0.54" : "0.34"} strokeDasharray={inner ? "8 5" : "14 8"} />;
-                })}
-                {env.nav.filter((w) => w.id !== "CHITOSE" && !w.id.startsWith("HOLD_")).map((w) => { const s = 5 / Math.sqrt(zoom); return <g key={w.id} onClick={(e) => { e.stopPropagation(); directToWaypoint(w.id); }} style={{ cursor: "pointer" }}><polygon points={`${w.x},${w.y - s} ${w.x + s},${w.y + s * 0.8} ${w.x - s},${w.y + s * 0.8}`} fill="none" stroke={w.id.startsWith("DP") ? "#c084fc" : "#38bdf8"} strokeWidth={1 / Math.sqrt(zoom)} opacity="0.75" /><text x={w.x + 7 / zoom} y={w.y + 4 / zoom} fill={w.id.startsWith("DP") ? "#c084fc" : "#38bdf8"} fontSize={10 / zoom} opacity="0.85">{w.label}</text></g>; })}
-                {env.nav.filter((w) => w.id.startsWith("HOLD_")).map((w) => { const s = 5 / Math.sqrt(zoom); return <g key={`hold-fix-${w.id}`} onClick={(e) => { e.stopPropagation(); directToWaypoint(w.id); }} style={{ cursor: "pointer" }}><circle cx={w.x} cy={w.y} r={5.2 / Math.sqrt(zoom)} fill="#f59e0b" opacity="0.16" stroke="#f59e0b" strokeWidth={1.1 / Math.sqrt(zoom)} /><circle cx={w.x} cy={w.y} r={2.1 / Math.sqrt(zoom)} fill="#f59e0b" opacity="0.86" /><text x={w.x + 7 / zoom} y={w.y + 4 / zoom} fill="#f59e0b" fontSize={10 / zoom} opacity="0.82">{w.label}</text></g>; })}
-                {mouseVectorMode && vectorPreview ? <g pointerEvents="none"><line x1={selected.x} y1={selected.y} x2={vectorPreview.x} y2={vectorPreview.y} stroke="#f6e94d" strokeWidth={1.6 / Math.sqrt(zoom)} strokeDasharray="5 5" opacity="0.9" /><circle cx={vectorPreview.x} cy={vectorPreview.y} r={4 / Math.sqrt(zoom)} fill="none" stroke="#f6e94d" strokeWidth={1.5 / Math.sqrt(zoom)} /><text x={vectorPreview.x + 8 / zoom} y={vectorPreview.y - 8 / zoom} fill="#f6e94d" fontSize={12 / zoom}>HDG {fmt3(vectorPreview.heading)}</text></g> : null}
-                {radarDisplayTargets.map((a) => { const sx = a.displayX ?? a.x; const sy = a.displayY ?? a.y; const isSel = a.id === selectedId; const vectorLen = (a.speed / 60) * PX_PER_NM * 2; const v = hdgVector(a.displayHeading ?? a.heading); const lowFuel = (a.fuelMinutes ?? 60) < 15; const color = conflictIds.has(a.id) ? "#ff1f1f" : cautionIds.has(a.id) ? "#f59e0b" : a.emergency ? "#ff4d4d" : lowFuel ? "#ff4d4d" : isSel ? "#f6e94d" : isFoxhound(a) ? "#ef4444" : a.category === "MIL" ? "#60a5fa" : a.category === "DEP" ? "#c084fc" : a.clearedILS ? "#4de1ff" : a.mode === "HOLD" ? "#f59e0b" : "#32ff4d"; return <g key={a.id} onClick={(e) => { e.stopPropagation(); selectAircraft(a.id); }} style={{ cursor: "pointer" }}><line x1={sx} y1={sy} x2={sx + v.x * vectorLen} y2={sy + v.y * vectorLen} stroke={color} strokeWidth={1.5 / Math.sqrt(zoom)} opacity="0.85" /><circle cx={sx} cy={sy} r={isSel ? 4 / Math.sqrt(zoom) : 3.2 / Math.sqrt(zoom)} fill={color} /><text x={sx + 10 / zoom} y={sy - 16 / zoom} fill={color} fontSize={12 / zoom} fontWeight="700">{a.id}</text><text x={sx + 10 / zoom} y={sy - 2 / zoom} fill={color} fontSize={12 / zoom}>{a.type} {fmtFL(a.altitude)} {Math.round(a.speed)} F{Math.round(a.fuelMinutes ?? 0)} B{(a.burnRate ?? 1).toFixed(1)} {a.category === "ARR" ? vnavStatus(a, env) : ""}</text><text x={sx + 10 / zoom} y={sy + 12 / zoom} fill={color} fontSize={12 / zoom}>{a.category} H{fmt3(a.displayHeading ?? a.heading)} {modeText(a)}</text><text x={sx + 10 / zoom} y={sy + 26 / zoom} fill={color} fontSize={9 / zoom} opacity="0.66">HIT {formatEta(a.radarAgeSec ?? 0)} AGO / EXTRAP</text></g>; })}
+                <ProcedureOverlay env={env} activeRunway={activeRunway} zoom={zoom} directToWaypoint={directToWaypoint} />
+                <MouseVectorOverlay mouseVectorMode={mouseVectorMode} vectorPreview={vectorPreview} selected={selected} zoom={zoom} fmt3={fmt3} />
+                <TargetLayer
+                  radarDisplayTargets={radarDisplayTargets}
+                  selectedId={selectedId}
+                  conflictIds={conflictIds}
+                  cautionIds={cautionIds}
+                  zoom={zoom}
+                  selectAircraft={selectAircraft}
+                  fmt3={fmt3}
+                  fmtFL={fmtFL}
+                  vnavStatus={vnavStatus}
+                  env={env}
+                  modeText={modeText}
+                />
               </svg>
               <div style={{ pointerEvents: "none", position: "absolute", inset: 0, opacity: 0.5, backgroundImage: "linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)", backgroundSize: "100% 4px" }} />
             </div>
