@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import MissionStatusPanel from "./components/MissionStatusPanel.jsx";
+import ObjectivePanel from "./components/ObjectivePanel.jsx";
+import RadioLog from "./components/RadioLog.jsx";
+import SequenceStrip from "./components/SequenceStrip.jsx";
+import StartScreen from "./components/StartScreen.jsx";
 import {
   AIRPORT_RUNWAYS,
   CENTER,
@@ -84,6 +89,7 @@ import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from 
 import {
   resolveAlternateTargetState,
   resolveDepartureGroundTargetState,
+  resolveDepartureTargetState,
   resolveDirectFixTargetState,
   resolveExitState,
   resolveRotorTargetState,
@@ -1856,67 +1862,6 @@ function resolveMilitaryTargetState(ac, env, mode, targetHeading, targetAltitude
   }
   return { ac, mode, targetHeading, targetAltitude, targetSpeed, landed, directReturn: null };
 }
-function resolveDepartureTargetState(ac, env, mode, routeIndex, targetHeading, targetAltitude, targetSpeed) {
-  const sid = env.sids[ac.sid] || env.sids.NORTH;
-  const br = xyToBearingRange(ac.x, ac.y);
-  if (ac.depState === "UNRESTRICTED") {
-    const nextFix = ac.route.length && routeIndex < ac.route.length ? wp(env.nav, ac.route[routeIndex]) : null;
-    const routeDone = routeIndex >= ac.route.length;
-    targetHeading = nextFix ? headingToPoint(ac.x, ac.y, nextFix) : sid.exitBearing;
-    targetAltitude = sid.topAlt;
-    targetSpeed = depTargetSpeed(ac);
-    mode = "SID";
-    if (nextFix && Math.hypot(ac.x - nextFix.x, ac.y - nextFix.y) / PX_PER_NM < 1.2) routeIndex = routeIndex < ac.route.length - 1 ? routeIndex + 1 : ac.route.length;
-    if (routeDone) targetHeading = sid.exitBearing;
-    if (sid && depExitReady({ ...ac, altitude: Math.max(ac.altitude, targetAltitude), routeIndex }, env)) mode = "ACC_READY";
-  } else if (ac.depState === "MISSED_APP") {
-    const missedNav = ac.routeRunway ? makeNavCached(ac.routeRunway) : env.nav;
-    const fix = wp(missedNav, ac.route[routeIndex]);
-    const missedCourse = RUNWAYS[ac.routeRunway || ac.approachRunway || env.runway.name]?.course || env.runway.course;
-    targetHeading = fix ? headingToPoint(ac.x, ac.y, fix) : missedCourse;
-    targetAltitude = 3000;
-    targetSpeed = 180;
-    mode = "MISSED_APP";
-    if (missedApproachSafeToReturn(ac, env)) {
-      mode = "MISSED_TRANSFER_APP";
-      const returnPatch = missedApproachReturnPatch(ac, env);
-      targetHeading = returnPatch.assignedHeading;
-      targetAltitude = returnPatch.assignedAltitude;
-      targetSpeed = returnPatch.assignedSpeed;
-      routeIndex = 0;
-      ac = { ...ac, ...returnPatch };
-    } else if (fix && Math.hypot(ac.x - fix.x, ac.y - fix.y) / PX_PER_NM < 1.2) {
-      if (routeIndex < ac.route.length - 1) routeIndex += 1;
-      else {
-        mode = "MISSED_TRANSFER_APP";
-        const returnPatch = missedApproachReturnPatch(ac, env);
-        targetHeading = returnPatch.assignedHeading;
-        targetAltitude = returnPatch.assignedAltitude;
-        targetSpeed = returnPatch.assignedSpeed;
-        routeIndex = 0;
-        ac = { ...ac, ...returnPatch };
-      }
-    }
-  } else if (mode === "DEP_READY") {
-    targetHeading = env.runway.course;
-    targetAltitude = 0;
-    targetSpeed = 0;
-  } else if (mode === "DEP_RADAR_CONTACT" || mode === "SID") {
-    const fix = wp(env.nav, ac.route[routeIndex]);
-    targetHeading = fix ? headingToPoint(ac.x, ac.y, fix) : sid.heading;
-    targetAltitude = (ac.depState === "RELEASED" || ac.depState === "UNRESTRICTED") ? ac.assignedAltitude : (ac.assignedAltitude && ac.assignedAltitude > 0 ? ac.assignedAltitude : sid.initialAlt);
-    targetSpeed = depTargetSpeed(ac);
-    mode = br.rangeNm > 2 ? "SID" : "DEP_RADAR_CONTACT";
-    if (fix && Math.hypot(ac.x - fix.x, ac.y - fix.y) / PX_PER_NM < 1.2) routeIndex = routeIndex < ac.route.length - 1 ? routeIndex + 1 : ac.route.length;
-    if (sid && depExitReady(ac, env)) mode = "ACC_READY";
-  } else if (mode === "DEP_VECTOR") {
-    targetHeading = ac.assignedHeading;
-    targetAltitude = ac.assignedAltitude;
-    targetSpeed = ac.assignedSpeed;
-    if (sid && depExitReady(ac, env)) mode = "ACC_READY";
-  }
-  return { ac, mode, routeIndex, targetHeading, targetAltitude, targetSpeed };
-}
 function resolveArrivalTargetState(ac, env, mode, routeIndex, clearedILS, targetHeading, targetAltitude, targetSpeed, landed, missed, patternLeg, navForAc) {
   const appRw = approachRunwayForAircraft(ac, env);
   if (isFinalMode(mode)) {
@@ -2153,7 +2098,12 @@ function aircraftMotionStep(ac, env, stepKind = "ARRIVAL") {
     targetSpeed = milState.targetSpeed;
     landed = milState.landed;
   } else if (stepKind === "DEPARTURE") {
-    const depState = resolveDepartureTargetState(ac, env, mode, routeIndex, targetHeading, targetAltitude, targetSpeed);
+    const depState = resolveDepartureTargetState(ac, env, mode, routeIndex, targetHeading, targetAltitude, targetSpeed, {
+      depExitReady,
+      makeNavCached,
+      missedApproachReturnPatch,
+      missedApproachSafeToReturn,
+    });
     ac = depState.ac;
     mode = depState.mode;
     routeIndex = depState.routeIndex;
@@ -3649,82 +3599,14 @@ export default function ATCRadarSimulator() {
 
   if (startScreen) {
     return (
-      <div style={{ minHeight: "100vh", background: "radial-gradient(circle at 50% 10%, #0f172a 0%, #020617 54%, #000 100%)", color: "#e5e7eb", padding: 34, boxSizing: "border-box", fontFamily: "system-ui, sans-serif" }}>
-        <div style={{ maxWidth: 1180, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 26 }}>
-            <div>
-              <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: 0.5 }}>ATC Radar Simulator</div>
-              <div style={{ marginTop: 8, color: "#94a3b8", fontSize: 15 }}>{lang === "zh" ? "选择运行模式。自由模式用于测试系统，关卡模式用于按剧本处理流量、天气与突发事件。" : "Select an operating mode. Free Play is for system testing; Scenario Mode uses scripted traffic, weather and events."}</div>
-            </div>
-            <button style={{ ...buttonStyle, padding: "9px 14px" }} onClick={() => setLang((v) => v === "en" ? "zh" : "en")}>{tr("langButton")}</button>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 16 }}>
-            {SCENARIOS.filter((sc) => sc.kind !== "DEBUG").map((sc) => {
-              const isSandbox = sc.kind === "SANDBOX";
-              const accent = isSandbox ? "#38bdf8" : sc.difficulty === "HARD" ? "#ef4444" : sc.difficulty === "EASY" ? "#22c55e" : "#f59e0b";
-              return <div key={sc.id} style={{ border: `1px solid ${accent}`, background: "rgba(15, 23, 42, 0.86)", borderRadius: 22, padding: 18, minHeight: 265, boxShadow: `0 0 24px ${isSandbox ? "rgba(56,189,248,0.12)" : sc.difficulty === "HARD" ? "rgba(239,68,68,0.16)" : "rgba(245,158,11,0.10)"}`, display: "flex", flexDirection: "column" }}>
-                <div style={{ fontSize: 12, color: accent, fontWeight: 900, letterSpacing: 1.3, marginBottom: 10 }}>{isSandbox ? "FREE PLAY" : sc.difficulty}</div>
-                <div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.18 }}>{lang === "zh" ? sc.titleZh : sc.title}</div>
-                <div style={{ color: "#cbd5e1", fontSize: 13, lineHeight: 1.5, marginTop: 12 }}>{lang === "zh" ? sc.subtitleZh : sc.subtitle}</div>
-                <div style={{ marginTop: 16, fontFamily: "monospace", color: "#94a3b8", fontSize: 12, lineHeight: 1.55 }}>
-                  ARR {sc.arrRunway} / DEP {sc.depRunway}<br />WIND {sc.wind}<br />WX {sc.weatherOn ? "ON" : "OFF"}<br />MODE {sc.kind}{sc.kind === "SCENARIO" ? <><br />INIT BOTH</> : null}
-                </div>
-                <button style={{ ...buttonStyle, background: isSandbox ? "#075985" : "#1d4ed8", border: `1px solid ${accent}`, marginTop: "auto" }} onClick={() => startMode(sc)}>{lang === "zh" ? (isSandbox ? "进入自由模式" : "开始关卡") : (isSandbox ? "Start Free Play" : "Start Scenario")}</button>
-              </div>;
-            })}
-          </div>
-
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
-            {SCENARIOS.filter((sc) => sc.kind === "DEBUG").map((sc) => <button key={sc.id} title={lang === "zh" ? sc.subtitleZh : sc.subtitle} style={{ border: "1px solid #64748b", background: "rgba(15,23,42,0.34)", color: "#64748b", borderRadius: 8, padding: "3px 7px", fontSize: 10, fontFamily: "monospace", cursor: "pointer", opacity: 0.62 }} onClick={() => startMode(sc)}>DEV</button>)}
-          </div>
-
-          <div style={{ marginTop: 22, display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 16 }}>
-            <div style={{ border: "1px solid #334155", background: "rgba(15, 23, 42, 0.82)", borderRadius: 18, padding: 16 }}>
-              <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{lang === "zh" ? "简易教程" : "Quick Tutorial"}</div>
-              <div style={{ color: "#cbd5e1", fontSize: 13, lineHeight: 1.65 }}>
-                {lang === "zh" ? <>
-                  <b>1. 运行：</b>进入关卡后点“运行”。关卡模式下流量、风向、跑道由剧本控制，不能手动生成或换跑道。<br />
-                  <b>2. 选择飞机：</b>点击雷达目标，或在右侧下拉列表选择目标；右侧面板显示高度、速度、航向、燃油和状态。<br />
-                  <b>3. 管制：</b>用 HDG / ALT / SPD 后点击“雷达引导”“ALT”“SPD”；也可开启“鼠标引导”后在雷达上点击给航向。<br />
-                  <b>4. 进场：</b>点击航点可直飞或接入程序；ILS 为自动截获，VAPP 会抑制 ILS 门控。进塔台空域后交给 TWR，再给落地许可。<br />
-                  <b>5. 离场：</b>TWR 先 Line Up，再 Clear TKOF；DEP 席位可恢复 SID、取消高度限制，满足出口条件后 To ACC。<br />
-                  <b>6. 视图：</b>2D 左键拖动、滚轮缩放；3D 左键平移、中键旋转、滚轮缩放。
-                </> : <>
-                  <b>1. Run:</b> enter a scenario and press Run. In Scenario Mode, traffic, wind and runway selection are controlled by the script.<br />
-                  <b>2. Select:</b> click a radar target or use the right-side selector. The panel shows altitude, speed, heading, fuel and state.<br />
-                  <b>3. Control:</b> set HDG / ALT / SPD, then use Vector, ALT or SPD. Mouse Vector lets you click the radar to assign heading.<br />
-                  <b>4. Arrival:</b> click fixes to join routes. ILS capture is automatic; VAPP suppresses ILS gate capture. Handoff to TWR before landing clearance.<br />
-                  <b>5. Departure:</b> TWR uses Line Up then Clear TKOF. DEP resumes SID, cancels altitude restrictions, then hands off to ACC when exit-ready.<br />
-                  <b>6. View:</b> 2D left-drag pans, wheel zooms. 3D left-drag pans, middle-drag rotates, wheel zooms.
-                </>}
-              </div>
-            </div>
-            <div style={{ border: "1px solid #334155", background: "rgba(15, 23, 42, 0.82)", borderRadius: 18, padding: 16 }}>
-              <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 10 }}>{lang === "zh" ? "关卡判定" : "Scenario Rules"}</div>
-              <div style={{ color: "#cbd5e1", fontSize: 13, lineHeight: 1.65 }}>
-                {lang === "zh" ? <>
-                  成功通常需要在时间内完成指定落地数与 ACC 移交数。<br />
-                  冲突目标会先标红，持续一小段时间后才判定失败。<br />
-                  复飞次数、冲突、超时会导致任务失败。<br />
-                  天气关需要绕开红色天气核心；穿越红区可能触发紧急状态。
-                </> : <>
-                  Success usually requires enough landings and ACC handoffs within the time limit.<br />
-                  Conflict targets turn red first; failure triggers only if the conflict persists briefly.<br />
-                  Excess missed approaches, conflicts, or time-over cause mission failure.<br />
-                  Weather scenarios require avoiding red cells; crossing them may trigger emergencies.
-                </>}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 22, border: "1px solid #1f2937", background: "rgba(2, 6, 23, 0.72)", borderRadius: 18, padding: 16, color: "#9ca3af", fontSize: 13, lineHeight: 1.6 }}>
-            {lang === "zh"
-              ? "当前版本的关卡模式先提供启动界面、固定初始条件与基础事件：换向关会在运行后触发风向转变，天气关会触发雪阵提示。后续可以继续加胜负条件、剧情事件、低油量、跑道关闭、军机任务冲突等。"
-              : "This first Scenario Mode build provides the start menu, fixed initial conditions, and basic scripted events: the runway-transition scenario triggers a wind shift after start, and the snow scenario triggers a weather event. Later builds can add win/loss conditions, emergency events, low fuel, runway closures and military-task conflicts."}
-          </div>
-        </div>
-      </div>
+      <StartScreen
+        scenarios={SCENARIOS}
+        lang={lang}
+        tr={tr}
+        buttonStyle={buttonStyle}
+        onToggleLang={() => setLang((v) => v === "en" ? "zh" : "en")}
+        onStartMode={startMode}
+      />
     );
   }
 
@@ -3770,44 +3652,30 @@ export default function ATCRadarSimulator() {
             </div> : null}
           </div>
 
-          <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 12, flex: "0 0 auto", minHeight: 600, overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: 20, fontWeight: 900 }}>{lang === "zh" ? "进场排序条" : "Arrival Sequence"}</div>
-              <button style={{ ...buttonStyle, padding: "5px 8px", fontSize: 12 }} onClick={resetSequenceAuto}>{lang === "zh" ? "自动" : "Auto"}</button>
-            </div>
-            <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.35, marginBottom: 8 }}>{lang === "zh" ? `JST ${formatJstTime(simSeconds)}。计划进场提前显示，未进入管制圈时不激活。` : `JST ${formatJstTime(simSeconds)}. Scheduled arrivals appear before entering the control area.`}</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 540, minHeight: 520, overflowY: "auto" }}>
-              {arrivalStripRows.length ? arrivalStripRows.map((r) => {
-                const ac = r.ac;
-                const border = r.inactive ? "#64748b" : r.scheduleLevel === "RED" || r.level === "RED" ? "#ef4444" : r.scheduleLevel === "AMBER" || r.level === "AMBER" ? "#f59e0b" : "#22c55e";
-                const bg = r.inactive ? "rgba(15,23,42,0.72)" : r.scheduleLevel === "RED" || r.level === "RED" ? "rgba(127,29,29,0.24)" : r.scheduleLevel === "AMBER" || r.level === "AMBER" ? "rgba(120,53,15,0.22)" : "#030712";
-                return <div key={`left-strip-${r.id}`} style={{ border: `1px solid ${border}`, background: bg, borderRadius: 12, padding: 8, fontFamily: "monospace", fontSize: 12, lineHeight: 1.35, userSelect: "none" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "24px 1fr auto auto", alignItems: "center", gap: 6 }}>
-                    <b style={{ color: border }}>{r.pos}</b>
-                    <b style={{ color: "#e5e7eb" }}>{ac.id} &nbsp; {ac.type} &nbsp; {wakeShort(wakeCategory(ac))}</b>
-                    {!r.inactive ? <button style={{ ...buttonStyle, padding: "1px 6px", fontSize: 11 }} onClick={() => moveInSequence(ac.id, -1)}>↑</button> : <span />}
-                    {!r.inactive ? <button style={{ ...buttonStyle, padding: "1px 6px", fontSize: 11 }} onClick={() => moveInSequence(ac.id, 1)}>↓</button> : <span />}
-                  </div>
-                  <div>ETA JST {formatJstTime(r.eta)} &nbsp; DEV {formatSignedClock(r.delay || 0)}{!r.inactive && r.predictedAt ? ` | PRED ${formatJstTime(r.predictedAt)}` : ""}{r.inactive ? ` | ACT ${formatJstTime(r.activationSec || 0)}` : ""}</div>
-                  <div>DME {Number.isFinite(r.geo?.alongNm) ? r.geo.alongNm.toFixed(1) : "--"} &nbsp; ALT {fmtFL(ac.altitude)} &nbsp; SPD {Math.round(ac.speed)}</div>
-                  {r.inactive ? <div style={{ color: "#94a3b8" }}>NOT ACTIVE — outside control area</div> : !r.gap ? <div>SEP ---- (first)</div> : <>
-                    <div>SEP {r.gap.predictedNm.toFixed(1)}NM {r.gap.predictedNm >= r.gap.radarReq ? "✓" : "✗"} &nbsp; WAKE {r.gap.wakeReq.toFixed(0)}NM {r.gap.predictedNm >= r.gap.wakeReq ? "✓" : "✗"}</div>
-                    {r.level !== "GREEN" ? <div style={{ color: border }}>{r.alertReason === "SCHEDULE_LATE" ? (lang === "zh" ? `进场已晚点 ${formatEta(r.delay || 0)}，需要重新排序或加速处理。` : `Arrival is late by ${formatEta(r.delay || 0)}; resequence or expedite.`) : r.alertReason === "SCHEDULE_DELAY" ? (lang === "zh" ? `预计延误 ${formatEta(r.delay || 0)}，间隔本身可用。` : `Projected delay ${formatEta(r.delay || 0)}; spacing itself is acceptable.`) : r.gap?.predictedNm < r.gap?.wakeReq ? `${wakeShort(wakeCategory(arrivalStripRows[r.pos - 2]?.ac || ac))}后${wakeShort(wakeCategory(ac))}需${r.gap.wakeReq.toFixed(0)}NM，预测仅${r.gap.predictedNm.toFixed(1)}NM` : r.gap?.predictedNm < r.gap?.radarReq ? `雷达间隔需3NM，预测仅${r.gap.predictedNm.toFixed(1)}NM` : (lang === "zh" ? `间隔可用，当前警告来自排序/时刻约束。` : `Spacing is acceptable; warning is from sequencing/schedule constraint.`)}</div> : null}
-                  </>}
-                </div>;
-              }) : <div style={{ ...smallText, border: "1px solid #1f2937", background: "#030712", borderRadius: 12, padding: 10 }}>{lang === "zh" ? "当前没有进场计划。" : "No active arrival plan."}</div>}
-            </div>
-          </div>
+          <SequenceStrip
+            lang={lang}
+            simSeconds={simSeconds}
+            buttonStyle={buttonStyle}
+            smallText={smallText}
+            arrivalStripRows={arrivalStripRows}
+            formatJstTime={formatJstTime}
+            formatSignedClock={formatSignedClock}
+            formatEta={formatEta}
+            fmtFL={fmtFL}
+            wakeCategory={wakeCategory}
+            wakeShort={wakeShort}
+            onResetAuto={resetSequenceAuto}
+            onMove={moveInSequence}
+          />
 
-          <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 12, flex: "0 0 auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-              <div style={{ fontSize: 18, fontWeight: 800 }}>{tr("radioLog")}</div>
-              <button style={{ ...buttonStyle, padding: "4px 8px", fontSize: 12 }} onClick={() => setRadioCollapsed((v) => !v)}>{radioCollapsed ? (lang === "zh" ? "展开" : "Show") : (lang === "zh" ? "收起" : "Hide")}</button>
-            </div>
-            {!radioCollapsed ? <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 130, overflowY: "auto", marginTop: 8 }}>
-              {log.map((l, i) => <div key={`log-${i}`} style={{ border: "1px solid #1f2937", background: "#030712", borderRadius: 10, padding: "8px 9px", color: "#e5e7eb", fontSize: 12, fontFamily: "monospace", lineHeight: 1.45 }}>{l}</div>)}
-            </div> : null}
-          </div>
+          <RadioLog
+            title={tr("radioLog")}
+            buttonStyle={buttonStyle}
+            collapsed={radioCollapsed}
+            lang={lang}
+            log={log}
+            onToggle={() => setRadioCollapsed((v) => !v)}
+          />
 
           <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 10, flex: "0 0 auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -4112,27 +3980,49 @@ export default function ATCRadarSimulator() {
             <div style={{ fontSize: 20, fontWeight: 900, color: runwayChangeCandidate.pair ? "#fbbf24" : "#7dd3fc", lineHeight: 1.2, marginBottom: 8 }}>{runwayNoticeTitle}</div>
             <div style={{ fontSize: 13, color: "#d1d5db", lineHeight: 1.45 }}>{runwayNoticeBody}</div>
           </div> : null}
-          {gameMode === "SCENARIO" && scenarioObjective ? <div style={{ border: `1px solid ${scenarioFailed ? "#ef4444" : scenarioComplete ? "#22c55e" : "#334155"}`, background: "#0f172a", borderRadius: 18, padding: 12 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>{lang === "zh" ? "关卡状态" : "Scenario Status"}</div>
-            <div style={{ ...smallText, fontFamily: "monospace" }}>
-              {lang === "zh" ? "状态" : "Status"}: {scenarioFailed ? (lang === "zh" ? "失败" : "FAILED") : scenarioComplete ? (lang === "zh" ? "完成" : "COMPLETE") : (lang === "zh" ? "进行中" : "ACTIVE")}<br />
-              {scenarioObjective.special === "FOXHOUND_ADIZ" ? <>{rjcjPriorityNotice ? <><span style={{ color: rjcjPriorityNotice.level === "DANGER" ? "#f97316" : rjcjPriorityNotice.level === "WARN" ? "#facc15" : rjcjPriorityNotice.level === "FAIL" ? "#ef4444" : "#38bdf8", fontWeight: 900 }}>{rjcjPriorityNotice.title}</span><br />{rjcjPriorityNotice.body}<br /></> : null}{lang === "zh" ? "任务要求" : "TASK"}: RJCJ CALL {scenarioEventsDone.foxhoundPreAlert ? "DONE" : "PENDING"} | JOIN {scenarioEventsDone.foxhoundJoin ? "DONE" : "PENDING"} | INTERCEPT {scenarioEventsDone.foxhoundSuccess ? "DONE" : "PENDING"} | EAGLE RTB {scenarioEventsDone.eagleRecovered ? "DONE" : "PENDING"} | ARR BANK {landedCount}/{scenarioObjective.landed}<br /></> : null}
-              TIME {Math.floor(tick / 120)} / {Math.floor(scenarioObjective.duration / 120)} min<br />
-              LAND {landedCount}/{scenarioObjective.landed} | ACC {handoffCount}/{scenarioObjective.handoff}<br />
-              CONFLICT {conflictPairs.length}/{scenarioObjective.maxConflict} | MISSED {missedCount}/{scenarioObjective.maxMissed}<br />
-              {conflictDetails.length ? `CONFLICTING: ${conflictDetails.map((p) => p.kind === "WAKE" ? `WAKE ${p.lead}>${p.trail} RWY ${p.runway} ${p.spacingNm.toFixed(1)}/${p.requiredNm.toFixed(1)}NM` : `RADAR ${p.a}/${p.b} ${p.lateralNm.toFixed(1)}NM ${Math.round(p.verticalFt)}FT`).join(" | ")}` : ""}<br />
-              {cautionDetails.length ? "CAUTION: " + cautionDetails.slice(0, 3).map((p) => p.kind === "WAKE" ? ("WAKE " + p.lead + ">" + p.trail + " " + p.spacingNm.toFixed(1) + "/" + p.requiredNm.toFixed(1) + "NM") : ("RADAR " + p.a + "/" + p.b + " " + p.lateralNm.toFixed(1) + "NM CLOS " + Math.round(p.closingKts) + "KT " + (Number.isFinite(p.tMinSec) ? Math.round(p.tMinSec) + "s" : ""))).join(" | ") : ""}<br />
-              {conflictDetails.length && !scenarioFailed ? (lang === "zh" ? "冲突目标已标红，失败判定即将触发。" : "Conflict targets highlighted; failure trigger pending.") : ""}<br />
-            </div>
-          </div> : null}
+          <ObjectivePanel
+            gameMode={gameMode}
+            scenarioObjective={scenarioObjective}
+            scenarioFailed={scenarioFailed}
+            scenarioComplete={scenarioComplete}
+            lang={lang}
+            smallText={smallText}
+            rjcjPriorityNotice={rjcjPriorityNotice}
+            scenarioEventsDone={scenarioEventsDone}
+            landedCount={landedCount}
+            handoffCount={handoffCount}
+            conflictPairs={conflictPairs}
+            missedCount={missedCount}
+            tick={tick}
+            conflictDetails={conflictDetails}
+            cautionDetails={cautionDetails}
+          />
           <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 12 }}>
             <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 10 }}>{tr("weatherStatus")}</div>
             <div style={{ ...smallText }}>{tr("wxRadar")}: {onOff(weatherOn)}<br />{tr("wind")}: {fmt3(windObj.dir)}/{windObj.speed}<br />{tr("weatherForecast")}: {fmt3(windObj.nextDir ?? windObj.dir)}/{windObj.nextSpeed ?? windObj.speed} {lang === "zh" ? `${windObj.changeIn ?? 0}${tr("inSeconds")}` : `${tr("inSeconds")} ${windObj.changeIn ?? 0}s`}<br />{tr("headwind")}: {env.headwind.toFixed(1)} kt<br />{tr("tailwind")}: {env.tailwind.toFixed(1)} kt<br />{tr("divertState")}: {divertRequired(windObj) ? tr("required") : tr("normal")}<br />{tr("runwayModeNotice")}</div>
           </div>
-          <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 16 }}>
-            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 14 }}>{tr("scoreboard")}</div>
-            <div style={{ ...smallText }}>{tr("score")}: {Math.round(score)}<br />{lang === "zh" ? "延误扣分" : "Delay penalty"}: -{delayPenalty}<br />{lang === "zh" ? "任务空域扣分" : "Mission airspace penalty"}: -{missionPenalty}<br />{tr("landed")}:  {landedCount}<br />{tr("accHandoff")}: {handoffCount}<br />{tr("conflicts")}: {conflictPairs.length}<br />{lang === "zh" ? "警报" : "Alerts"}: {cautionDetails.length} {lang === "zh" ? "黄" : "amber"} / {conflictDetails.length} {lang === "zh" ? "红" : "red"}<br />{lang === "zh" ? "任务空域侵入" : "Mission airspace violations"}: {missionAirspaceViolations.length}<br />{tr("missedAppCount")}:  {missedCount}<br />{tr("emergency")}: {emergencyCount}<br />{tr("lowFuel")}: {lowFuelCount}<br />{tr("rjccActiveRunway")}: {activeRunway}<br />{tr("rjcjTraffic")}: {aircraft.filter((a) => a.category === "MIL").length}<br />{lang === "zh" ? "活跃走廊" : "Active corridors"}: {activeCorridors.length}<br />{tr("arrivals")}:  {arrCount}<br />{tr("departures")}: {depCount}</div>
-          </div>
+          <MissionStatusPanel
+            tr={tr}
+            lang={lang}
+            smallText={smallText}
+            score={score}
+            delayPenalty={delayPenalty}
+            missionPenalty={missionPenalty}
+            landedCount={landedCount}
+            handoffCount={handoffCount}
+            conflictPairs={conflictPairs}
+            cautionDetails={cautionDetails}
+            conflictDetails={conflictDetails}
+            missionAirspaceViolations={missionAirspaceViolations}
+            missedCount={missedCount}
+            emergencyCount={emergencyCount}
+            lowFuelCount={lowFuelCount}
+            activeRunway={activeRunway}
+            aircraft={aircraft}
+            activeCorridors={activeCorridors}
+            arrCount={arrCount}
+            depCount={depCount}
+          />
           <div style={{ border: "1px solid #1f2937", background: "#0f172a", borderRadius: 18, padding: 16 }}>
             <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 14 }}>{tr("airports")}</div>
             <div style={{ ...smallText }}>RJCC: {tr("mainCivilField")}, {tr("rwy")} {activeRunway}<br />RJCJ: {tr("jasdfBase")}, 18/36 recovery area<br />RJCH: {tr("hakodateAlt")}, {tr("activeRunwayLabel")} {env.airports.RJCH.name}<br />RJSM: {tr("misawaAlt")}, {tr("activeRunwayLabel")} {env.airports.RJSM.name}</div>
