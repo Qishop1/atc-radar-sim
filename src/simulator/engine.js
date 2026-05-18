@@ -1,6 +1,7 @@
 import { PX_PER_NM, RUNWAYS } from "./constants.js";
-import { headingToPoint, xyToBearingRange } from "./geometry.js";
+import { clamp, headingToPoint, xyToBearingRange } from "./geometry.js";
 import { approachSpeedFor, cleanSpeedFor } from "./aircraftPerf.js";
+import { getAircraftMissionArea, missionAreaPoint, rjcjDepartureGate, rjcjHelipadPoint } from "./military.js";
 
 function wp(nav, id) { return nav.find((w) => w.id === id); }
 
@@ -66,6 +67,39 @@ export function resolveAlternateTargetState(ac, env, mode, targetHeading, target
     ac = { ...ac, destination: altStep.altAirport, alternate: altStep.altAirport, category: "ARR", clearedILS: false, landingClearance: false, towerControlled: false, contact: "APP", route: [], routeRunway: null, approachRunway: null };
   }
   return { ac, mode, targetHeading, targetAltitude, targetSpeed };
+}
+
+export function resolveRotorTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed, landed) {
+  if (mode === "RJCJ_HELO_DEP") {
+    const area = getAircraftMissionArea(ac);
+    const mp = missionAreaPoint(area);
+    const heloGate = rjcjDepartureGate(env, ac.rjcjRunway === "HELIPAD" ? env.airports.RJCJ.name : ac.rjcjRunway, ac.type);
+    const distGate = Math.hypot(ac.x - heloGate.x, ac.y - heloGate.y) / PX_PER_NM;
+    const distMission = Math.hypot(ac.x - mp.x, ac.y - mp.y) / PX_PER_NM;
+    if (!ac.heloGatePassed && distGate > 1.0) {
+      targetHeading = headingToPoint(ac.x, ac.y, heloGate);
+      targetAltitude = 1000;
+      targetSpeed = 80;
+    } else {
+      ac = { ...ac, heloGatePassed: true };
+      targetHeading = headingToPoint(ac.x, ac.y, mp);
+      targetAltitude = clamp(ac.assignedAltitude, area.minAlt, area.maxAlt);
+      targetSpeed = Math.min(ac.assignedSpeed, 115);
+    }
+    if (distMission < area.radiusNm * 0.75) mode = "RJCJ_MISSION";
+  } else if (mode === "RJCJ_HELO_RECOVERY") {
+    const pad = rjcjHelipadPoint(env);
+    const distNm = Math.hypot(ac.x - pad.x, ac.y - pad.y) / PX_PER_NM;
+    targetHeading = headingToPoint(ac.x, ac.y, pad);
+    targetAltitude = clamp(distNm * 220, 0, 1600);
+    targetSpeed = distNm > 5 ? 105 : distNm > 2 ? 75 : 45;
+    if (distNm < 0.25 && ac.altitude < 120 && ac.speed < 70) landed = true;
+  } else {
+    targetHeading = ac.assignedHeading;
+    targetAltitude = clamp(ac.assignedAltitude, 0, 2500);
+    targetSpeed = Math.min(ac.assignedSpeed, 115);
+  }
+  return { ac, mode, targetHeading, targetAltitude, targetSpeed, landed };
 }
 
 export function resolveExitState(ac, ctx) {

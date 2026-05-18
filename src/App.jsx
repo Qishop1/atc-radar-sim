@@ -86,6 +86,7 @@ import {
   resolveDepartureGroundTargetState,
   resolveDirectFixTargetState,
   resolveExitState,
+  resolveRotorTargetState,
   stepFuelOutAircraft,
   stepRolloutAircraft,
 } from "./simulator/engine.js";
@@ -2056,38 +2057,6 @@ function resolveVisualTargetState(ac, env, mode, clearedILS, targetHeading, targ
     ac = { ...ac, routeRunway: missedRw.name, approachRunway: missedRw.name };
   }
   return { ac, mode, clearedILS, targetHeading, targetAltitude, targetSpeed, landed, missed, patternLeg };
-}
-function resolveRotorTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed, landed) {
-  if (mode === "RJCJ_HELO_DEP") {
-    const area = getAircraftMissionArea(ac);
-    const mp = missionAreaPoint(area);
-    const heloGate = rjcjDepartureGate(env, ac.rjcjRunway === "HELIPAD" ? env.airports.RJCJ.name : ac.rjcjRunway, ac.type);
-    const distGate = Math.hypot(ac.x - heloGate.x, ac.y - heloGate.y) / PX_PER_NM;
-    const distMission = Math.hypot(ac.x - mp.x, ac.y - mp.y) / PX_PER_NM;
-    if (!ac.heloGatePassed && distGate > 1.0) {
-      targetHeading = headingToPoint(ac.x, ac.y, heloGate);
-      targetAltitude = 1000;
-      targetSpeed = 80;
-    } else {
-      ac = { ...ac, heloGatePassed: true };
-      targetHeading = headingToPoint(ac.x, ac.y, mp);
-      targetAltitude = clamp(ac.assignedAltitude, area.minAlt, area.maxAlt);
-      targetSpeed = Math.min(ac.assignedSpeed, 115);
-    }
-    if (distMission < area.radiusNm * 0.75) mode = "RJCJ_MISSION";
-  } else if (mode === "RJCJ_HELO_RECOVERY") {
-    const pad = rjcjHelipadPoint(env);
-    const distNm = Math.hypot(ac.x - pad.x, ac.y - pad.y) / PX_PER_NM;
-    targetHeading = headingToPoint(ac.x, ac.y, pad);
-    targetAltitude = clamp(distNm * 220, 0, 1600);
-    targetSpeed = distNm > 5 ? 105 : distNm > 2 ? 75 : 45;
-    if (distNm < 0.25 && ac.altitude < 120 && ac.speed < 70) landed = true;
-  } else {
-    targetHeading = ac.assignedHeading;
-    targetAltitude = clamp(ac.assignedAltitude, 0, 2500);
-    targetSpeed = Math.min(ac.assignedSpeed, 115);
-  }
-  return { ac, mode, targetHeading, targetAltitude, targetSpeed, landed };
 }
 function aircraftMotionStep(ac, env, stepKind = "ARRIVAL") {
   if (ac.landed || ac.handedOff) return ac;
