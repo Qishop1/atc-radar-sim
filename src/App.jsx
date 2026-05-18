@@ -81,6 +81,7 @@ import {
   windVector,
 } from "./simulator/weather.js";
 import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from "./simulator/scenarios.js";
+import { resolveExitState, stepFuelOutAircraft, stepRolloutAircraft } from "./simulator/engine.js";
 
 const I18N = {
   en: {
@@ -1842,15 +1843,12 @@ function aircraftStep(ac, env) {
 function aircraftCoreStep(ac, env) {
   if (ac.landed || ac.handedOff) return ac;
   if (isFoxhound(ac)) return stepFoxhoundIntruder(ac, env);
-  if (isRolloutMode(ac)) return stepRolloutAircraft(ac, env);
-  if (isFuelOutMode(ac)) return stepFuelOutAircraft(ac, env);
+  if (isRolloutMode(ac)) return stepRolloutAircraft(ac, env, stepRolloutMotion);
+  if (isFuelOutMode(ac)) return stepFuelOutAircraft(ac, env, stepFuelOutMotion);
   if (isAlternateMode(ac.mode)) return stepAlternateAircraft(ac, env);
   if (ac.category === "MIL") return stepMilitaryAircraft(ac, env);
   if (ac.category === "DEP") return stepDepartureAircraft(ac, env);
   return stepArrivalAircraft(ac, env);
-}
-function stepRolloutAircraft(ac, env) {
-  return stepRolloutMotion(ac, env);
 }
 function stepFoxhoundIntruder(ac, env) {
   const area = ac.adizArea || foxhoundAdizArea();
@@ -1865,9 +1863,6 @@ function stepFoxhoundIntruder(ac, env) {
   const distNm = (spd * SIM_STEP_SECONDS) / 3600;
   const afterMove = { x: ac.x + v.x * distNm * PX_PER_NM, y: ac.y + v.y * distNm * PX_PER_NM };
   return { ...ac, heading: hdg, angularRate: shortestTurn(ac.heading, hdg) / SIM_STEP_SECONDS, speed: clamp(spd, 220, maxSpd), altitude: alt, x: afterMove.x, y: afterMove.y, assignedHeading: targetHeading, assignedSpeed: targetSpeed, assignedAltitude: targetAltitude, adizArea: area, color: ac.mode === "FOXHOUND_EGRESS" ? "#f97316" : "#ef4444", trail: [...ac.trail.slice(-55), { x: ac.x, y: ac.y }] };
-}
-function stepFuelOutAircraft(ac, env) {
-  return stepFuelOutMotion(ac, env);
 }
 function stepAlternateAircraft(ac, env) {
   return aircraftMotionStep(ac, env, "ALTERNATE");
@@ -2282,154 +2277,6 @@ function resolveAlternateTargetState(ac, env, mode, targetHeading, targetAltitud
     ac = { ...ac, destination: altStep.altAirport, alternate: altStep.altAirport, category: "ARR", clearedILS: false, landingClearance: false, towerControlled: false, contact: "APP", route: [], routeRunway: null, approachRunway: null };
   }
   return { ac, mode, targetHeading, targetAltitude, targetSpeed };
-}
-function resolveExitState(ac, ctx) {
-  const {
-    protectedRollout,
-    emergency,
-    appReturn,
-    twrMissedToDep,
-    appReturnPatch,
-    missedRw,
-    mode,
-    routeIndex,
-    clearedILS,
-    missed,
-    patternLeg,
-  } = ctx;
-  if (protectedRollout) {
-    return {
-      category: "ARR",
-      route: [],
-      routeIndex,
-      depState: null,
-      clearedILS: false,
-      mode: "ROLLOUT",
-      missed: false,
-      destination: "RJCC",
-      sid: null,
-      color: "#4ade80",
-      routeRunway: ac.routeRunway,
-      approachRunway: ac.approachRunway,
-      assignedHeading: ctx.targetHeading,
-      assignedSpeed: ctx.targetSpeed,
-      assignedAltitude: ctx.targetAltitude,
-      towerControlled: ac.towerControlled,
-      landingClearance: ac.landingClearance,
-      contact: ac.contact,
-      patternLeg,
-      missedTicks: ac.missedTicks,
-      speedRestriction: ac.speedRestriction,
-      runwayOccupancy: ac.runwayOccupancy,
-      occupancyRunway: ac.occupancyRunway,
-    };
-  }
-  if (emergency) {
-    return {
-      category: "ARR",
-      route: [],
-      routeIndex: 0,
-      depState: null,
-      clearedILS: false,
-      mode: emergency,
-      missed: false,
-      destination: "RJCC",
-      sid: null,
-      color: "#ff4d4d",
-      routeRunway: ac.routeRunway,
-      approachRunway: ac.approachRunway,
-      assignedHeading: ctx.targetHeading,
-      assignedSpeed: ctx.targetSpeed,
-      assignedAltitude: ctx.targetAltitude,
-      towerControlled: ctx.emergencyTowerControlled ? true : ac.towerControlled,
-      landingClearance: ac.landingClearance,
-      contact: ctx.emergencyTowerControlled ? "TWR" : "APP",
-      patternLeg,
-      missedTicks: ac.missedTicks,
-      speedRestriction: ac.speedRestriction,
-      runwayOccupancy: ac.runwayOccupancy,
-      occupancyRunway: ac.occupancyRunway,
-    };
-  }
-  if (appReturn) {
-    return {
-      category: "ARR",
-      route: appReturnPatch.route,
-      routeIndex: 0,
-      depState: null,
-      clearedILS: false,
-      mode: appReturnPatch.mode,
-      missed: false,
-      destination: ac.destination,
-      sid: null,
-      color: "#32ff4d",
-      routeRunway: appReturnPatch.routeRunway,
-      approachRunway: appReturnPatch.approachRunway,
-      assignedHeading: appReturnPatch.assignedHeading,
-      assignedSpeed: appReturnPatch.assignedSpeed,
-      assignedAltitude: appReturnPatch.assignedAltitude,
-      towerControlled: false,
-      landingClearance: false,
-      contact: "APP",
-      patternLeg: 0,
-      missedTicks: 0,
-      speedRestriction: null,
-      runwayOccupancy: false,
-      occupancyRunway: null,
-    };
-  }
-  if (twrMissedToDep) {
-    return {
-      category: "DEP",
-      route: ["MA1", "MAHOLD"],
-      routeIndex: 0,
-      depState: "MISSED_APP",
-      clearedILS: false,
-      mode: "MISSED_APP",
-      missed: true,
-      destination: "RJCC",
-      sid: null,
-      color: "#ff9f43",
-      routeRunway: missedRw.name,
-      approachRunway: missedRw.name,
-      assignedHeading: missedRw.course,
-      assignedSpeed: 180,
-      assignedAltitude: 3000,
-      towerControlled: false,
-      landingClearance: false,
-      contact: "DEP",
-      patternLeg: 0,
-      missedTicks: 0,
-      speedRestriction: 200,
-      runwayOccupancy: false,
-      occupancyRunway: null,
-    };
-  }
-  return {
-    category: ac.category,
-    route: ac.route,
-    routeIndex,
-    depState: ac.depState,
-    clearedILS,
-    mode,
-    missed,
-    destination: ac.destination,
-    sid: ac.sid,
-    color: ac.color,
-    routeRunway: ac.routeRunway,
-    approachRunway: ac.approachRunway,
-    assignedHeading: ctx.targetHeading,
-    assignedSpeed: ctx.targetSpeed,
-    assignedAltitude: ctx.targetAltitude,
-    towerControlled: ac.towerControlled,
-    landingClearance: ac.landingClearance,
-    contact: ac.contact,
-    patternLeg,
-    missedTicks: ac.depState === "MISSED_APP" ? (ac.missedTicks || 0) + 1 : ac.missedTicks,
-    speedRestriction: ac.speedRestriction,
-    runwayOccupancy: ac.runwayOccupancy,
-    occupancyRunway: ac.occupancyRunway,
-  };
 }
 function aircraftMotionStep(ac, env, stepKind = "ARRIVAL") {
   if (ac.landed || ac.handedOff) return ac;

@@ -1,0 +1,156 @@
+export function stepRolloutAircraft(ac, env, stepRolloutMotion) {
+  return stepRolloutMotion(ac, env);
+}
+
+export function stepFuelOutAircraft(ac, env, stepFuelOutMotion) {
+  return stepFuelOutMotion(ac, env);
+}
+
+export function resolveExitState(ac, ctx) {
+  const {
+    protectedRollout,
+    emergency,
+    appReturn,
+    twrMissedToDep,
+    appReturnPatch,
+    missedRw,
+    mode,
+    routeIndex,
+    clearedILS,
+    missed,
+    patternLeg,
+  } = ctx;
+  if (protectedRollout) {
+    return {
+      category: "ARR",
+      route: [],
+      routeIndex,
+      depState: null,
+      clearedILS: false,
+      mode: "ROLLOUT",
+      missed: false,
+      destination: "RJCC",
+      sid: null,
+      color: "#4ade80",
+      routeRunway: ac.routeRunway,
+      approachRunway: ac.approachRunway,
+      assignedHeading: ctx.targetHeading,
+      assignedSpeed: ctx.targetSpeed,
+      assignedAltitude: ctx.targetAltitude,
+      towerControlled: ac.towerControlled,
+      landingClearance: ac.landingClearance,
+      contact: ac.contact,
+      patternLeg,
+      missedTicks: ac.missedTicks,
+      speedRestriction: ac.speedRestriction,
+      runwayOccupancy: ac.runwayOccupancy,
+      occupancyRunway: ac.occupancyRunway,
+    };
+  }
+  if (emergency) {
+    return {
+      category: "ARR",
+      route: [],
+      routeIndex: 0,
+      depState: null,
+      clearedILS: false,
+      mode: emergency,
+      missed: false,
+      destination: "RJCC",
+      sid: null,
+      color: "#ff4d4d",
+      routeRunway: ac.routeRunway,
+      approachRunway: ac.approachRunway,
+      assignedHeading: ctx.targetHeading,
+      assignedSpeed: ctx.targetSpeed,
+      assignedAltitude: ctx.targetAltitude,
+      towerControlled: ctx.emergencyTowerControlled ? true : ac.towerControlled,
+      landingClearance: ac.landingClearance,
+      contact: ctx.emergencyTowerControlled ? "TWR" : "APP",
+      patternLeg,
+      missedTicks: ac.missedTicks,
+      speedRestriction: ac.speedRestriction,
+      runwayOccupancy: ac.runwayOccupancy,
+      occupancyRunway: ac.occupancyRunway,
+    };
+  }
+  if (appReturn) {
+    return {
+      category: "ARR",
+      route: appReturnPatch.route,
+      routeIndex: 0,
+      depState: null,
+      clearedILS: false,
+      mode: appReturnPatch.mode,
+      missed: false,
+      destination: ac.destination,
+      sid: null,
+      color: "#32ff4d",
+      routeRunway: appReturnPatch.routeRunway,
+      approachRunway: appReturnPatch.approachRunway,
+      assignedHeading: appReturnPatch.assignedHeading,
+      assignedSpeed: appReturnPatch.assignedSpeed,
+      assignedAltitude: appReturnPatch.assignedAltitude,
+      towerControlled: false,
+      landingClearance: false,
+      contact: "APP",
+      patternLeg: 0,
+      missedTicks: 0,
+      speedRestriction: null,
+      runwayOccupancy: false,
+      occupancyRunway: null,
+    };
+  }
+  if (twrMissedToDep) {
+    return {
+      category: "DEP",
+      route: ["MA1", "MAHOLD"],
+      routeIndex: 0,
+      depState: "MISSED_APP",
+      clearedILS: false,
+      mode: "MISSED_APP",
+      missed: true,
+      destination: "RJCC",
+      sid: null,
+      color: "#ff9f43",
+      routeRunway: missedRw.name,
+      approachRunway: missedRw.name,
+      assignedHeading: missedRw.course,
+      assignedSpeed: 180,
+      assignedAltitude: 3000,
+      towerControlled: false,
+      landingClearance: false,
+      contact: "DEP",
+      patternLeg: 0,
+      missedTicks: 0,
+      speedRestriction: 200,
+      runwayOccupancy: false,
+      occupancyRunway: null,
+    };
+  }
+  return {
+    category: ac.category,
+    route: ac.route,
+    routeIndex,
+    depState: ac.depState,
+    clearedILS,
+    mode,
+    missed,
+    destination: ac.destination,
+    sid: ac.sid,
+    color: ac.color,
+    routeRunway: ac.routeRunway,
+    approachRunway: ac.approachRunway,
+    assignedHeading: ctx.targetHeading,
+    assignedSpeed: ctx.targetSpeed,
+    assignedAltitude: ctx.targetAltitude,
+    towerControlled: ac.towerControlled,
+    landingClearance: ac.landingClearance,
+    contact: ac.contact,
+    patternLeg,
+    missedTicks: ac.depState === "MISSED_APP" ? (ac.missedTicks || 0) + 1 : ac.missedTicks,
+    speedRestriction: ac.speedRestriction,
+    runwayOccupancy: ac.runwayOccupancy,
+    occupancyRunway: ac.occupancyRunway,
+  };
+}
