@@ -1,6 +1,6 @@
 import { PX_PER_NM, RUNWAYS } from "./constants.js";
 import { clamp, headingToPoint, xyToBearingRange } from "./geometry.js";
-import { approachSpeedFor, cleanSpeedFor } from "./aircraftPerf.js";
+import { approachSpeedFor, cleanSpeedFor, depTargetSpeed } from "./aircraftPerf.js";
 import { getAircraftMissionArea, missionAreaPoint, rjcjDepartureGate, rjcjHelipadPoint } from "./military.js";
 
 function wp(nav, id) { return nav.find((w) => w.id === id); }
@@ -41,6 +41,69 @@ export function resolveDepartureGroundTargetState(ac, env, mode, targetHeading, 
     }
   }
   return { ac, mode, targetHeading, targetAltitude, targetSpeed };
+}
+
+export function resolveDepartureTargetState(ac, env, mode, routeIndex, targetHeading, targetAltitude, targetSpeed, deps) {
+  const { depExitReady, makeNavCached, missedApproachReturnPatch, missedApproachSafeToReturn } = deps;
+  const sid = env.sids[ac.sid] || env.sids.NORTH;
+  const br = xyToBearingRange(ac.x, ac.y);
+  if (ac.depState === "UNRESTRICTED") {
+    const nextFix = ac.route.length && routeIndex < ac.route.length ? wp(env.nav, ac.route[routeIndex]) : null;
+    const routeDone = routeIndex >= ac.route.length;
+    targetHeading = nextFix ? headingToPoint(ac.x, ac.y, nextFix) : sid.exitBearing;
+    targetAltitude = sid.topAlt;
+    targetSpeed = depTargetSpeed(ac);
+    mode = "SID";
+    if (nextFix && Math.hypot(ac.x - nextFix.x, ac.y - nextFix.y) / PX_PER_NM < 1.2) routeIndex = routeIndex < ac.route.length - 1 ? routeIndex + 1 : ac.route.length;
+    if (routeDone) targetHeading = sid.exitBearing;
+    if (sid && depExitReady({ ...ac, altitude: Math.max(ac.altitude, targetAltitude), routeIndex }, env)) mode = "ACC_READY";
+  } else if (ac.depState === "MISSED_APP") {
+    const missedNav = ac.routeRunway ? makeNavCached(ac.routeRunway) : env.nav;
+    const fix = wp(missedNav, ac.route[routeIndex]);
+    const missedCourse = RUNWAYS[ac.routeRunway || ac.approachRunway || env.runway.name]?.course || env.runway.course;
+    targetHeading = fix ? headingToPoint(ac.x, ac.y, fix) : missedCourse;
+    targetAltitude = 3000;
+    targetSpeed = 180;
+    mode = "MISSED_APP";
+    if (missedApproachSafeToReturn(ac, env)) {
+      mode = "MISSED_TRANSFER_APP";
+      const returnPatch = missedApproachReturnPatch(ac, env);
+      targetHeading = returnPatch.assignedHeading;
+      targetAltitude = returnPatch.assignedAltitude;
+      targetSpeed = returnPatch.assignedSpeed;
+      routeIndex = 0;
+      ac = { ...ac, ...returnPatch };
+    } else if (fix && Math.hypot(ac.x - fix.x, ac.y - fix.y) / PX_PER_NM < 1.2) {
+      if (routeIndex < ac.route.length - 1) routeIndex += 1;
+      else {
+        mode = "MISSED_TRANSFER_APP";
+        const returnPatch = missedApproachReturnPatch(ac, env);
+        targetHeading = returnPatch.assignedHeading;
+        targetAltitude = returnPatch.assignedAltitude;
+        targetSpeed = returnPatch.assignedSpeed;
+        routeIndex = 0;
+        ac = { ...ac, ...returnPatch };
+      }
+    }
+  } else if (mode === "DEP_READY") {
+    targetHeading = env.runway.course;
+    targetAltitude = 0;
+    targetSpeed = 0;
+  } else if (mode === "DEP_RADAR_CONTACT" || mode === "SID") {
+    const fix = wp(env.nav, ac.route[routeIndex]);
+    targetHeading = fix ? headingToPoint(ac.x, ac.y, fix) : sid.heading;
+    targetAltitude = (ac.depState === "RELEASED" || ac.depState === "UNRESTRICTED") ? ac.assignedAltitude : (ac.assignedAltitude && ac.assignedAltitude > 0 ? ac.assignedAltitude : sid.initialAlt);
+    targetSpeed = depTargetSpeed(ac);
+    mode = br.rangeNm > 2 ? "SID" : "DEP_RADAR_CONTACT";
+    if (fix && Math.hypot(ac.x - fix.x, ac.y - fix.y) / PX_PER_NM < 1.2) routeIndex = routeIndex < ac.route.length - 1 ? routeIndex + 1 : ac.route.length;
+    if (sid && depExitReady(ac, env)) mode = "ACC_READY";
+  } else if (mode === "DEP_VECTOR") {
+    targetHeading = ac.assignedHeading;
+    targetAltitude = ac.assignedAltitude;
+    targetSpeed = ac.assignedSpeed;
+    if (sid && depExitReady(ac, env)) mode = "ACC_READY";
+  }
+  return { ac, mode, routeIndex, targetHeading, targetAltitude, targetSpeed };
 }
 
 export function resolveDirectFixTargetState(ac, navForAc, mode, targetHeading, targetAltitude, targetSpeed) {
