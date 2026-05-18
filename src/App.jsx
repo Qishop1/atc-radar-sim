@@ -8,6 +8,10 @@ import RunwayControls from "./components/RunwayControls.jsx";
 import SequenceStrip from "./components/SequenceStrip.jsx";
 import SelectedAircraftPanel from "./components/SelectedAircraftPanel.jsx";
 import StartScreen from "./components/StartScreen.jsx";
+import { I18N } from "./i18n.js";
+import { formatEta, formatJstTime, formatSignedClock, wakeShort } from "./simulator/formatting.js";
+import { isGroundTraffic, separationAssessment, wakeAssessment } from "./simulator/separation.js";
+import { estimateArrivalEtaSec, sequenceGapAssessment } from "./simulator/sequencing.js";
 import {
   AIRPORT_RUNWAYS,
   CENTER,
@@ -116,380 +120,9 @@ import {
   rjcjRunwayForType,
 } from "./simulator/military.js";
 
-const I18N = {
-  en: {
-    langButton: "中文",
-    systemAutomation: "System / Automation",
-    pause: "Pause",
-    run: "Run",
-    spawnDep: "Spawn DEP",
-    spawnApp: "Spawn APP",
-    reset: "Reset",
-    windMode: "Wind mode",
-    wind: "Wind",
-    runwayMode: "Runway mode",
-    arrRwy: "ARR RWY",
-    depRwy: "DEP RWY",
-    parallelOps: "Parallel ops",
-    appAuto: "APP auto",
-    depAuto: "DEP auto",
-    milAuto: "MIL auto",
-    timeScale: "Time scale",
-    wxRadar: "WX radar",
-    twrAuto: "TWR auto",
-    zoomOut: "Zoom -",
-    zoomIn: "Zoom +",
-    followOn: "Follow ON",
-    followOff: "Follow OFF",
-    radioLog: "Radio log",
-    radar: "RADAR",
-    twr: "TWR",
-    controlConsole: "Control Console",
-    vector: "Vector",
-    mouseArmed: "Mouse ARMED",
-    mouseVector: "Mouse vector",
-    remove: "Remove",
-    starVnav: "STAR / VNAV",
-    directIf01: "Direct IF01",
-    hold: "Hold",
-    ilsApp: "ILS APP",
-    visualApp: "Visual APP",
-    toTwr: "To TWR",
-    missedApp: "Missed APP",
-    toRjch: "To RJCH",
-    toRjsm: "To RJSM",
-    divertAll: "Divert all",
-    acceptArr: "Accept ARR",
-    visualPattern: "Visual Pattern",
-    clearLand: "Clear Land",
-    goAround: "Go Around",
-    lineUp: "Line Up",
-    clearTkof: "Clear TKOF",
-    releaseRwy: "Release RWY",
-    resumeSid: "Resume SID",
-    unrestAlt: "UNREST ALT",
-    toAcc: "To ACC",
-    spawnMil: "Spawn MIL",
-    milVector: "MIL vector",
-    recoverRjcj: "Recover RJCJ",
-    missionDepart: "Mission depart",
-    divertRjch: "Divert RJCH",
-    weatherStatus: "Weather Status",
-    scoreboard: "Scoreboard",
-    airports: "Airports",
-    on: "ON",
-    off: "OFF",
-    auto: "AUTO",
-    manual: "MANUAL",
-    sameRunway: "same runway",
-    arrDepSplit: "ARR/DEP split",
-    qnh: "QNH",
-    statusLine: "Status",
-    targetBrg: "BRG",
-    targetAlt: "ALT",
-    targetSpd: "SPD",
-    targetHdg: "HDG",
-    fuel: "FUEL",
-    burn: "BURN",
-    dest: "DEST",
-    sid: "SID",
-    rwy: "RWY",
-    dme: "DME",
-    loc: "LOC",
-    vnav: "VNAV",
-    status: "STATUS",
-    contact: "CONTACT",
-    spdLim: "SPD LIM",
-    categoryArr: "ARR",
-    categoryDep: "DEP",
-    categoryMil: "MIL",
-    twrPending: "TWR PENDING",
-    landClr: "LAND CLR",
-    noClr: "NO CLR",
-    tkofClr: "TKOF CLR",
-    rollout: "ROLLOUT",
-    vacated: "VACATED",
-    visual: "VISUAL",
-    pattern: "PATTERN",
-    normal: "NORMAL",
-    required: "REQUIRED",
-    wxOk: "WX OK",
-    divertRequired: "DIVERT REQUIRED",
-    next: "Next",
-    inSeconds: "in",
-    hw: "HW",
-    tw: "TW",
-    arrInTwr: "ARR in TWR",
-    depQueue: "DEP queue",
-    selected: "Selected",
-    landClearanceShort: "Land CLR",
-    tkof: "TKOF",
-    yes: "YES",
-    no: "NO",
-    notTwr: "NOT TWR",
-    weatherForecast: "Forecast",
-    headwind: "Headwind",
-    tailwind: "Tailwind",
-    divertState: "Divert state",
-    runwayModeNotice: "Runway mode may require planning before the phase change.",
-    runwayChangePending: "Runway change pending",
-    score: "Score",
-    landed: "Landed",
-    accHandoff: "ACC handoff",
-    conflicts: "Conflicts",
-    missedAppCount: "Missed APP",
-    emergency: "Emergency",
-    lowFuel: "Low fuel",
-    rjccActiveRunway: "RJCC active runway",
-    rjcjTraffic: "RJCJ traffic",
-    arrivals: "Arrivals",
-    departures: "Departures",
-    mainCivilField: "main civil field",
-    jasdfBase: "JASDF Chitose AB",
-    hakodateAlt: "Hakodate alternate",
-    misawaAlt: "Misawa alternate",
-    activeRunwayLabel: "active RWY",
-    towerViewNote: "TWR view: local display, runway occupancy, final / pattern / departure queue.",
-  },
-  zh: {
-    langButton: "EN",
-    systemAutomation: "系统 / 自动化",
-    pause: "暂停",
-    run: "运行",
-    spawnDep: "生成离场",
-    spawnApp: "生成进场",
-    reset: "重置",
-    windMode: "风向模式",
-    wind: "风",
-    runwayMode: "跑道模式",
-    arrRwy: "进场跑道",
-    depRwy: "离场跑道",
-    parallelOps: "平行运行",
-    appAuto: "进场自动",
-    depAuto: "离场自动",
-    milAuto: "军机自动",
-    timeScale: "时间倍率",
-    wxRadar: "天气雷达",
-    twrAuto: "塔台自动",
-    zoomOut: "缩小",
-    zoomIn: "放大",
-    followOn: "跟随 开",
-    followOff: "跟随 关",
-    radioLog: "无线电记录",
-    radar: "雷达",
-    twr: "塔台",
-    controlConsole: "管制席位",
-    vector: "雷达引导",
-    mouseArmed: "鼠标引导待命",
-    mouseVector: "鼠标引导",
-    remove: "移除",
-    starVnav: "进场程序 / VNAV",
-    directIf01: "直飞 IF01",
-    hold: "等待",
-    ilsApp: "ILS 进近",
-    visualApp: "目视进近",
-    toTwr: "交给塔台",
-    missedApp: "复飞程序",
-    toRjch: "备降 RJCH",
-    toRjsm: "备降 RJSM",
-    divertAll: "全部备降",
-    acceptArr: "接收进场",
-    visualPattern: "目视航线",
-    clearLand: "允许落地",
-    goAround: "复飞",
-    lineUp: "进跑道等待",
-    clearTkof: "允许起飞",
-    releaseRwy: "释放跑道",
-    resumeSid: "恢复 SID",
-    unrestAlt: "取消高度限制",
-    toAcc: "交给区域",
-    spawnMil: "生成军机",
-    milVector: "军机引导",
-    recoverRjcj: "返回 RJCJ",
-    missionDepart: "任务离场",
-    divertRjch: "备降 RJCH",
-    weatherStatus: "天气状态",
-    scoreboard: "计分板",
-    airports: "机场",
-    on: "开",
-    off: "关",
-    auto: "自动",
-    manual: "手动",
-    sameRunway: "同跑道",
-    arrDepSplit: "进离场分跑道",
-    qnh: "气压",
-    statusLine: "状态",
-    targetBrg: "方位",
-    targetAlt: "高度",
-    targetSpd: "速度",
-    targetHdg: "航向",
-    fuel: "燃油",
-    burn: "耗油率",
-    dest: "目的地",
-    sid: "离场程序",
-    rwy: "跑道",
-    dme: "DME",
-    loc: "航道偏差",
-    vnav: "垂直剖面",
-    status: "状态",
-    contact: "频率",
-    spdLim: "限速",
-    categoryArr: "进场",
-    categoryDep: "离场",
-    categoryMil: "军机",
-    twrPending: "待交塔台",
-    landClr: "已许落地",
-    noClr: "未许可",
-    tkofClr: "已许起飞",
-    rollout: "滑跑",
-    vacated: "脱离跑道",
-    visual: "目视",
-    pattern: "航线",
-    normal: "正常",
-    required: "需要",
-    wxOk: "天气可用",
-    divertRequired: "必须备降",
-    next: "下一变化",
-    inSeconds: "秒后",
-    hw: "顶风",
-    tw: "顺风",
-    arrInTwr: "塔台进场",
-    depQueue: "离场队列",
-    selected: "选中目标",
-    landClearanceShort: "落地许可",
-    tkof: "起飞",
-    yes: "是",
-    no: "否",
-    notTwr: "未交塔台",
-    weatherForecast: "预报",
-    headwind: "顶风",
-    tailwind: "顺风",
-    divertState: "备降状态",
-    runwayModeNotice: "跑道模式切换前需要提前规划流量。",
-    runwayChangePending: "跑道换向等待",
-    score: "得分",
-    landed: "落地",
-    accHandoff: "交给区域",
-    conflicts: "冲突",
-    missedAppCount: "复飞",
-    emergency: "紧急情况",
-    lowFuel: "低油量",
-    rjccActiveRunway: "RJCC 当前跑道",
-    rjcjTraffic: "RJCJ 军机流量",
-    arrivals: "进场",
-    departures: "离场",
-    mainCivilField: "主民航机场",
-    jasdfBase: "航空自卫队千岁基地",
-    hakodateAlt: "函馆备降场",
-    misawaAlt: "三泽备降场",
-    activeRunwayLabel: "当前跑道",
-    towerViewNote: "塔台视图：本场显示、跑道占用、五边/航线/离场队列。",
-  },
-};
+const WAKE_ASSESSMENT_DEPS = { approachRunwayForAircraft };
+const SEQUENCING_DEPS = { approachRunwayForAircraft, makeNavCached, wp };
 
-function separationAssessment(a, b) {
-  const dxNm = (b.x - a.x) / PX_PER_NM;
-  const dyNm = (b.y - a.y) / PX_PER_NM;
-  const lateralNm = Math.hypot(dxNm, dyNm);
-  const verticalFt = Math.abs(a.altitude - b.altitude);
-  const av = hdgVector(a.heading), bv = hdgVector(b.heading);
-  const rvx = (b.speed * bv.x - a.speed * av.x) / 3600;
-  const rvy = (b.speed * bv.y - a.speed * av.y) / 3600;
-  const closingKts = lateralNm > 0 ? -((dxNm * rvx + dyNm * rvy) / lateralNm) * 3600 : 0;
-  const tMinSec = closingKts > 1 ? Math.max(0, ((lateralNm - 3) / closingKts) * 3600) : Infinity;
-  const predicted = closingKts > 1 && lateralNm < 8 && verticalFt < 1500 && tMinSec <= 90;
-  const violation = lateralNm < 3 && verticalFt < 1000;
-  const amber = !violation && (predicted || (lateralNm < 4.5 && verticalFt < 1200 && closingKts > 20));
-  return { a: a.id, b: b.id, lateralNm, verticalFt, closingKts, tMinSec, level: violation ? "RED" : amber ? "AMBER" : "NONE", kind: "RADAR" };
-}
-function isGroundTraffic(ac) {
-  return ac.touchdown || ac.runwayOccupancy || ac.altitude < 300 || ["DEP_READY", "LINEUP_WAIT", "TAKEOFF_ROLL", "ROLLOUT", "VACATED"].includes(ac.mode);
-}
-function wakeAssessment(lead, trail, env) {
-  if (isGroundTraffic(lead) || isGroundTraffic(trail)) return null;
-  if (lead.category !== "ARR" || trail.category !== "ARR") return null;
-  const finalWakeModes = new Set(["ILS", "FINAL", "FINAL_NO_CLEAR", "TWR_FINAL", "FINAL_LAND", "UNSTABLE_ILS"]);
-  if (!finalWakeModes.has(lead.mode) || !finalWakeModes.has(trail.mode)) return null;
-  if (lead.hold || trail.hold || lead.mode === "HOLD" || trail.mode === "HOLD") return null;
-  if (lead.missed || trail.missed || String(lead.mode).includes("MISSED") || String(trail.mode).includes("MISSED")) return null;
-  const rwLead = approachRunwayForAircraft(lead, env), rwTrail = approachRunwayForAircraft(trail, env);
-  if (rwLead.name !== rwTrail.name) return null;
-  if (Math.abs(shortestTurn(lead.heading, rwLead.course)) > 45 || Math.abs(shortestTurn(trail.heading, rwTrail.course)) > 45) return null;
-  const gLead = finalGeometryAt(runwayOrigin(rwLead), rwLead.course, lead.x, lead.y);
-  const gTrail = finalGeometryAt(runwayOrigin(rwTrail), rwTrail.course, trail.x, trail.y);
-  if (Math.abs(gLead.crossPx) > 55 || Math.abs(gTrail.crossPx) > 55) return null;
-  if (gLead.alongNm < 0.2 || gTrail.alongNm < 0.2 || gLead.alongNm > 16 || gTrail.alongNm > 16) return null;
-  if (gLead.alongNm >= gTrail.alongNm) return null;
-  const spacingNm = gTrail.alongNm - gLead.alongNm;
-  const requiredNm = wakeMinNm(lead, trail);
-  const closureKts = Math.max(0, trail.speed - lead.speed);
-  const tMinSec = closureKts > 1 ? Math.max(0, ((spacingNm - requiredNm) / closureKts) * 3600) : Infinity;
-  const violation = spacingNm < requiredNm;
-  const amber = !violation && spacingNm < requiredNm + 1.5 && (closureKts > 5 || spacingNm < requiredNm + 0.8);
-  return { a: lead.id, b: trail.id, lead: lead.id, trail: trail.id, runway: rwLead.name, spacingNm, requiredNm, closureKts, tMinSec, level: violation ? "RED" : amber ? "AMBER" : "NONE", kind: "WAKE" };
-}
-function wakeShort(wtc) { return wtc === "SUPER" ? "S" : wtc === "HEAVY" ? "H" : wtc === "LIGHT" ? "L" : "M"; }
-function formatEta(sec) {
-  if (!Number.isFinite(sec)) return "--:--";
-  const s = Math.max(0, Math.round(sec));
-  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
-}
-function formatJstTime(sec) {
-  if (!Number.isFinite(sec)) return "--:--:--";
-  const s = Math.max(0, Math.round(sec));
-  const daySec = (9 * 3600 + s) % 86400;
-  const h = Math.floor(daySec / 3600);
-  const m = Math.floor((daySec % 3600) / 60);
-  const ss = daySec % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-}
-function formatSignedClock(sec) {
-  if (!Number.isFinite(sec)) return "+--:--";
-  const sign = sec >= 0 ? "+" : "-";
-  return `${sign}${formatEta(Math.abs(sec))}`;
-}
-function arrivalPathDistanceNm(ac, env) {
-  if (ac.category !== "ARR") return Infinity;
-  const rw = approachRunwayForAircraft(ac, env);
-  const nav = ac.routeRunway ? makeNavCached(ac.routeRunway) : env.nav;
-  const geo = finalGeometryAt(runwayOrigin(rw), rw.course, ac.x, ac.y);
-  let dist = Math.max(0, geo.alongNm);
-  if (ac.route?.length && ac.mode === "ROUTE") {
-    let px = ac.x, py = ac.y;
-    dist = 0;
-    for (let i = ac.routeIndex || 0; i < ac.route.length; i++) {
-      const fix = wp(nav, ac.route[i]);
-      if (!fix) continue;
-      dist += Math.hypot(px - fix.x, py - fix.y) / PX_PER_NM;
-      px = fix.x; py = fix.y;
-    }
-    const lastGeo = finalGeometryAt(runwayOrigin(rw), rw.course, px, py);
-    dist += Math.max(0, lastGeo.alongNm);
-  } else if (ac.mode === "VECTOR" || ac.mode === "RADAR_CONTACT" || ac.mode === "DIRECT_FIX") {
-    dist = Math.max(dist, xyToBearingRange(ac.x, ac.y).rangeNm * 0.55);
-  } else if (ac.mode === "VISUAL_APP" || ac.mode === "TWR_PATTERN") {
-    dist = Math.max(0, geo.alongNm) + Math.max(0, 5 - (ac.patternLeg || 0)) * 2.2;
-  } else if (ac.mode === "MISSED_APP" || ac.mode === "MISSED" || ac.mode === "MISSED_TRANSFER_APP") {
-    dist = Math.max(14, xyToBearingRange(ac.x, ac.y).rangeNm * 0.55);
-  }
-  return dist;
-}
-function estimateArrivalEtaSec(ac, env) {
-  const dist = arrivalPathDistanceNm(ac, env);
-  const spd = Math.max(90, Math.min(Math.max(ac.speed || 0, approachSpeedFor(ac)), cleanSpeedFor(ac)));
-  return (dist / spd) * 3600;
-}
-function sequenceGapAssessment(lead, trail, env) {
-  const leadEta = estimateArrivalEtaSec(lead, env);
-  const trailEta = estimateArrivalEtaSec(trail, env);
-  const timeDelta = trailEta - leadEta;
-  const predictedNm = Math.max(0, (timeDelta / 3600) * Math.max(approachSpeedFor(trail), 90));
-  const wakeReq = wakeMinNm(lead, trail);
-  const radarReq = 3;
-  const required = Math.max(wakeReq, radarReq);
-  const level = predictedNm < required ? "RED" : predictedNm < required + 1.2 ? "AMBER" : "GREEN";
-  return { leadEta, trailEta, timeDelta, predictedNm, wakeReq, radarReq, required, level };
-}
 function airportApproachGeometry(airportId, ac) {
   const ap = AIRPORTS.find((a) => a.id === airportId);
   if (!ap) return null;
@@ -2818,8 +2451,8 @@ export default function ATCRadarSimulator() {
         if (radar.level !== "NONE") alerts.push(radar);
         const wakeCandidate = a.category === "ARR" && b.category === "ARR" && finalWakeModes.has(a.mode) && finalWakeModes.has(b.mode);
         if (!wakeCandidate) continue;
-        const wakeAB = wakeAssessment(a, b, env);
-        const wakeBA = wakeAssessment(b, a, env);
+        const wakeAB = wakeAssessment(a, b, env, WAKE_ASSESSMENT_DEPS);
+        const wakeBA = wakeAssessment(b, a, env, WAKE_ASSESSMENT_DEPS);
         if (wakeAB && wakeAB.level !== "NONE") alerts.push(wakeAB);
         if (wakeBA && wakeBA.level !== "NONE") alerts.push(wakeBA);
       }
@@ -2845,7 +2478,7 @@ export default function ATCRadarSimulator() {
       const missing = activeArrIds.filter((id) => !kept.some((s) => s.id === id)).map((id) => {
         const ac = aircraft.find((a) => a.id === id);
         const planned = gameMode === "SCENARIO" ? plan.find((i) => i.id === id) : null;
-        const etaSec = planned?.etaSec ?? (planned ? planned.at / 2 + 1080 : nowSec + (ac ? estimateArrivalEtaSec(ac, env) : 1200));
+        const etaSec = planned?.etaSec ?? (planned ? planned.at / 2 + 1080 : nowSec + (ac ? estimateArrivalEtaSec(ac, env, SEQUENCING_DEPS) : 1200));
         return { id, manualPosition: null, etaSec };
       });
       const next = [...kept, ...missing];
@@ -2895,19 +2528,19 @@ export default function ATCRadarSimulator() {
       .filter((s) => s.ac && s.ac.category === "ARR" && !s.ac.handedOff && !s.ac.landed && !s.ac.hold && !["VACATED", "ROLLOUT", "HOLD", "MISSED", "MISSED_APP", "MISSED_TRANSFER_APP", "DIVERT", "ALT_HANDOFF", "MAYDAY", "PANPAN"].includes(s.ac.mode))
       .sort((a, b) => {
         if (anyManual) {
-          const ap = a.manualPosition ?? 999 + estimateArrivalEtaSec(a.ac, env) / 100000;
-          const bp = b.manualPosition ?? 999 + estimateArrivalEtaSec(b.ac, env) / 100000;
+          const ap = a.manualPosition ?? 999 + estimateArrivalEtaSec(a.ac, env, SEQUENCING_DEPS) / 100000;
+          const bp = b.manualPosition ?? 999 + estimateArrivalEtaSec(b.ac, env, SEQUENCING_DEPS) / 100000;
           return ap - bp;
         }
-        return estimateArrivalEtaSec(a.ac, env) - estimateArrivalEtaSec(b.ac, env);
+        return estimateArrivalEtaSec(a.ac, env, SEQUENCING_DEPS) - estimateArrivalEtaSec(b.ac, env, SEQUENCING_DEPS);
       });
     return ordered.map((row, idx) => {
-      const etaRel = estimateArrivalEtaSec(row.ac, env);
+      const etaRel = estimateArrivalEtaSec(row.ac, env, SEQUENCING_DEPS);
       const eta = row.etaSec ?? (simSeconds + etaRel);
       const predictedAt = simSeconds + etaRel;
-      const autoRank = [...ordered].sort((a, b) => estimateArrivalEtaSec(a.ac, env) - estimateArrivalEtaSec(b.ac, env)).findIndex((r) => r.id === row.id);
+      const autoRank = [...ordered].sort((a, b) => estimateArrivalEtaSec(a.ac, env, SEQUENCING_DEPS) - estimateArrivalEtaSec(b.ac, env, SEQUENCING_DEPS)).findIndex((r) => r.id === row.id);
       const prev = idx > 0 ? ordered[idx - 1].ac : null;
-      const gap = prev ? sequenceGapAssessment(prev, row.ac, env) : null;
+      const gap = prev ? sequenceGapAssessment(prev, row.ac, env, SEQUENCING_DEPS) : null;
       const delay = Math.max(0, predictedAt - eta, simSeconds > eta ? simSeconds - eta : 0);
       const scheduleLevel = simSeconds > eta ? "RED" : delay > 180 ? "AMBER" : "ONTIME";
       const geo = finalGeometryForAircraft(row.ac, env, row.ac.x, row.ac.y);
