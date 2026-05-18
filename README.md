@@ -40,6 +40,10 @@ The Windows executable is unsigned. Microsoft SmartScreen may show a warning whe
 
 Windows 可执行文件未进行代码签名。打开安装包或应用时，Microsoft SmartScreen 可能会显示警告。
 
+## Developer documentation / 开发者文档
+
+For developer onboarding and architecture notes, see [docs/CODEBASE_TOUR.md](docs/CODEBASE_TOUR.md).
+
 ## Web Development / Web 开发运行
 
 Start the Vite development server:
