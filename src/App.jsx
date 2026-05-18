@@ -81,7 +81,14 @@ import {
   windVector,
 } from "./simulator/weather.js";
 import { SCENARIOS, scenarioObjectives, scenarioTrafficPlan, spawnRoutes } from "./simulator/scenarios.js";
-import { resolveExitState, stepFuelOutAircraft, stepRolloutAircraft } from "./simulator/engine.js";
+import {
+  resolveAlternateTargetState,
+  resolveDepartureGroundTargetState,
+  resolveDirectFixTargetState,
+  resolveExitState,
+  stepFuelOutAircraft,
+  stepRolloutAircraft,
+} from "./simulator/engine.js";
 
 const I18N = {
   en: {
@@ -2193,35 +2200,6 @@ function resolveVisualTargetState(ac, env, mode, clearedILS, targetHeading, targ
   }
   return { ac, mode, clearedILS, targetHeading, targetAltitude, targetSpeed, landed, missed, patternLeg };
 }
-function resolveDepartureGroundTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed) {
-  if (mode === "LINEUP_WAIT") {
-    targetHeading = RUNWAYS[ac.depRunway || env.runway.name]?.course || env.runway.course;
-    targetAltitude = 0;
-    targetSpeed = 0;
-  } else if (mode === "TAKEOFF_ROLL") {
-    const depRw = RUNWAYS[ac.depRunway || env.runway.name] || env.runway;
-    const rotateSpeed = Math.max(118, approachSpeedFor(ac) - 8);
-    targetHeading = depRw.course;
-    targetSpeed = ac.speed < rotateSpeed ? rotateSpeed + 8 : Math.max(170, cleanSpeedFor(ac));
-    targetAltitude = ac.speed >= rotateSpeed ? 1200 : 0;
-    if (ac.speed >= rotateSpeed && ac.altitude > 80) {
-      const depSid = env.sids[ac.sid] || env.sids.NORTH;
-      mode = "INITIAL_CLIMB";
-      targetAltitude = Math.max(4000, depSid.initialAlt || 5000);
-      targetSpeed = Math.max(175, cleanSpeedFor(ac));
-    }
-  } else if (mode === "INITIAL_CLIMB") {
-    const depSid = env.sids[ac.sid] || env.sids.NORTH;
-    targetHeading = RUNWAYS[ac.depRunway || env.runway.name]?.course || env.runway.course;
-    targetAltitude = Math.max(4000, depSid.initialAlt || 5000);
-    targetSpeed = Math.max(175, cleanSpeedFor(ac));
-    if (ac.altitude > 700 || xyToBearingRange(ac.x, ac.y).rangeNm > 1.8) {
-      mode = "DEP_RADAR_CONTACT";
-      ac = { ...ac, runwayOccupancy: false, occupancyRunway: null, towerControlled: false };
-    }
-  }
-  return { ac, mode, targetHeading, targetAltitude, targetSpeed };
-}
 function resolveRotorTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed, landed) {
   if (mode === "RJCJ_HELO_DEP") {
     const area = getAircraftMissionArea(ac);
@@ -2253,30 +2231,6 @@ function resolveRotorTargetState(ac, env, mode, targetHeading, targetAltitude, t
     targetSpeed = Math.min(ac.assignedSpeed, 115);
   }
   return { ac, mode, targetHeading, targetAltitude, targetSpeed, landed };
-}
-function resolveDirectFixTargetState(ac, navForAc, mode, targetHeading, targetAltitude, targetSpeed) {
-  const fix = wp(navForAc, ac.route[0]);
-  if (fix) {
-    targetHeading = headingToPoint(ac.x, ac.y, fix);
-    targetAltitude = ac.assignedAltitude;
-    targetSpeed = ac.assignedSpeed;
-    if (Math.hypot(ac.x - fix.x, ac.y - fix.y) / PX_PER_NM < 1.0) {
-      mode = ac.category === "MIL" ? "RJCJ_VECTOR" : ac.category === "DEP" ? "DEP_VECTOR" : "VECTOR";
-      targetHeading = ac.assignedHeading;
-    }
-  }
-  return { ac, mode, targetHeading, targetAltitude, targetSpeed };
-}
-function resolveAlternateTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed) {
-  const altStep = alternateDivertStep(ac, env);
-  if (altStep) {
-    mode = altStep.mode;
-    targetHeading = altStep.targetHeading;
-    targetAltitude = altStep.targetAltitude;
-    targetSpeed = altStep.targetSpeed;
-    ac = { ...ac, destination: altStep.altAirport, alternate: altStep.altAirport, category: "ARR", clearedILS: false, landingClearance: false, towerControlled: false, contact: "APP", route: [], routeRunway: null, approachRunway: null };
-  }
-  return { ac, mode, targetHeading, targetAltitude, targetSpeed };
 }
 function aircraftMotionStep(ac, env, stepKind = "ARRIVAL") {
   if (ac.landed || ac.handedOff) return ac;
@@ -2357,7 +2311,7 @@ function aircraftMotionStep(ac, env, stepKind = "ARRIVAL") {
     targetAltitude = directState.targetAltitude;
     targetSpeed = directState.targetSpeed;
   } else if (["DIVERT", "ALT_HANDOFF"].includes(ac.mode)) {
-    const altState = resolveAlternateTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed);
+    const altState = resolveAlternateTargetState(ac, env, mode, targetHeading, targetAltitude, targetSpeed, alternateDivertStep);
     ac = altState.ac;
     mode = altState.mode;
     targetHeading = altState.targetHeading;
