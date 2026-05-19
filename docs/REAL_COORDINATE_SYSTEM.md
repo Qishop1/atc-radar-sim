@@ -31,6 +31,23 @@ Do not mix per-layer projections. A radar view should use one projection object 
 
 `src/geo/legacyCoordinateBridge.js` exists only for compatibility. It can translate between legacy local `x/y`, bearing/range, lat/lon, and radar-frame `x/y`, but it must not be used to silently replace legacy gameplay functions yet.
 
+## Airspace Seed Debug Checks
+
+RJCC-area airport and runway real-coordinate seed data lives in:
+
+- `src/data/airspace/rjcc/airports.js`
+- `src/data/airspace/rjcc/runways.js`
+
+These files are source data. Do not re-derive airport ARP coordinates from runway thresholds. Airport ARP latitude/longitude must come from `airports.js`; runway threshold latitude/longitude must come from `runways.js`.
+
+`src/geo/rjccAirspaceDebugChecks.js` provides read-only debug helpers around that source data:
+
+- `validateRjccAirspaceSeeds(...)`
+- `createRjccAirspaceDebugProjection(...)`
+- `debugRjccAirspaceCoordinates(...)`
+
+These helpers return structured objects for validation, projection round trips, runway threshold distance checks, and optional legacy-coordinate bridge round trips. They do not mutate simulator state, do not replace legacy `x/y`, and are not part of gameplay authority.
+
 ## Future Migration Order
 
 1. Coordinate system.

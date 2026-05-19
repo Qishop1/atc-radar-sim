@@ -7,8 +7,8 @@ import { RjccJaipMapLayer } from "../../map/jaip/RjccJaipMapLayer.jsx";
 import { makePathHelpers } from "../../map/jaip/pathHelpers.js";
 
 const SVG = { width: 1000, height: 930 };
-const defaultRadarLayerState = { coastline: true, contour: true, aca: true };
-const radarLayerLabels = { coastline: "COAST", contour: "CONTOUR", aca: "ACA" };
+const defaultRadarLayerState = { coastline: true, contour: true, aca: true, airports: true, runways: true };
+const radarLayerLabels = { coastline: "COAST", contour: "CONTOUR", aca: "ACA", airports: "AIRPORT", runways: "RWY" };
 const USE_COASTLINE_BOUNDS_FOR_RADAR_MAP = true;
 const FALLBACK_BOUNDS = { minLat: 41.0, maxLat: 45.8, minLon: 139.0, maxLon: 146.5 };
 
@@ -207,6 +207,8 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
           isZooming={isZooming}
           showCoastline={radarLayerState.coastline}
           showContour={radarLayerState.contour}
+          showAirports={radarLayerState.airports}
+          showRunways={radarLayerState.runways}
           showAca={radarLayerState.aca}
           coastlines={coastlines}
           pointById={chartData.pointById}
