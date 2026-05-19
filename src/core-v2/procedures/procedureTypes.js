@@ -1,0 +1,10 @@
+export const SID = "SID";
+export const STAR = "STAR";
+export const APPROACH = "APPROACH";
+export const HOLD = "HOLD";
+export const FIX_LEG = "FIX";
+export const HEADING_TO_FIX = "HEADING_TO_FIX";
+export const HEADING_LEG = "HEADING";
+export const COURSE_LEG = "COURSE";
+export const ARC_LEG = "ARC";
+export const HOLD_LEG = "HOLD";

@@ -175,7 +175,7 @@ function createCascadeTree(aircraft, suggestedReplies) {
     ]),
     branch("lateral", "Vector / Direct", [
       branch("heading", "Fly heading", [270, 290, 310, 350, 10].map((value) => leaf(`heading-${value}`, String(value).padStart(3, "0"), [flyHeading(value)]))),
-      branch("direct", "Direct", ["OBGOS", "CHE", "NAVER"].map((id) => leaf(`direct-${id}`, id, [directToFix(id)]))),
+      branch("direct", "Direct", ["OBGOS", "CHE", "MKE", "HWE", "SPE", "NAVER"].map((id) => leaf(`direct-${id}`, id, [directToFix(id)]))),
     ]),
   ];
 }

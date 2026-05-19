@@ -14,6 +14,7 @@ import {
   resumeNormalSpeed,
 } from "./clearanceFactories.js";
 import { sampleApproaches } from "./sampleClearanceProfiles.js";
+import { getApproachesForRunway } from "../procedures/procedureLookup.js";
 
 function menuItem(id, label, component) {
   return { id, label, component };
@@ -22,10 +23,15 @@ function menuItem(id, label, component) {
 export function buildClearanceMenu({ aircraft, context } = {}) {
   const availableFixIds = new Set((context?.fixes || fixes).map((fix) => fix.id));
   const availableNavaidIds = new Set((context?.navaids || navaids).map((navaid) => navaid.id));
+  const airportId = aircraft?.destination || "RJCC";
+  const procedureApproaches = context?.approaches || getApproachesForRunway({ airportId, runwayId: aircraft?.assignedRunwayId || undefined });
+  const approachChoices = procedureApproaches.length ? procedureApproaches : sampleApproaches;
   const altitude = Math.round(aircraft?.altitudeFt ?? 0);
   const speed = Math.round(aircraft?.groundSpeedKt ?? 0);
   const directItems = [menuItem("direct-obgos", "Direct OBGOS", directToFix("OBGOS"))];
-  if (availableNavaidIds.has("CHE")) directItems.push(menuItem("direct-che", "Direct CHE", directToFix("CHE")));
+  for (const navaidId of ["CHE", "MKE", "HWE", "SPE"]) {
+    if (availableNavaidIds.has(navaidId)) directItems.push(menuItem(`direct-${navaidId.toLowerCase()}`, `Direct ${navaidId}`, directToFix(navaidId)));
+  }
   if (availableFixIds.has("NAVER")) directItems.push(menuItem("direct-naver", "Direct NAVER", directToFix("NAVER")));
 
   const flowItems = [
@@ -37,7 +43,7 @@ export function buildClearanceMenu({ aircraft, context } = {}) {
 
   return [
     { id: "radar-contact", label: "Radar Contact", items: [menuItem("radar-contact", "Radar contact", radarContact())] },
-    { id: "expect-approach", label: "Expect Approach", items: sampleApproaches.map((approach) => menuItem(`expect-${approach.id}`, approach.name, expectApproach({ approachId: approach.id, runwayId: approach.runwayId, approachName: approach.name }))) },
+    { id: "expect-approach", label: "Expect Approach", items: approachChoices.map((approach) => menuItem(`expect-${approach.id}`, approach.name, expectApproach({ approachId: approach.id, runwayId: approach.runwayId, approachName: approach.name }))) },
     { id: "altitude", label: "Altitude", items: [menuItem("maintain-present-altitude", `Maintain present altitude (${altitude})`, maintainAltitude(altitude)), ...[11000, 8500, 6500, 4000].map((value) => menuItem(`descend-${value}`, `Descend and maintain ${value}`, descendAndMaintain(value)))] },
     { id: "speed", label: "Speed", items: [menuItem("maintain-present-speed", `Maintain present speed (${speed})`, maintainSpeed(speed)), ...[250, 220, 200, 180, 160].map((value) => menuItem(`speed-${value}`, `Reduce speed to ${value}`, reduceSpeedTo(value))), menuItem("resume-normal-speed", "Resume normal speed", resumeNormalSpeed())] },
     { id: "flow", label: "Flow", items: flowItems },

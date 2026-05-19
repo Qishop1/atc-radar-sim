@@ -1,10 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { fixes as rjccFixes } from "../../data/airspace/rjcc/fixes.js";
+import { localizers as rjccLocalizers } from "../../data/airspace/rjcc/localizers.js";
+import { navaids as rjccAirspaceNavaids } from "../../data/airspace/rjcc/navaids.js";
 import { rawPoints } from "../../data/jaip/rjcc/acaPoints.js";
 import { rawNavaids } from "../../data/jaip/rjcc/navaids.js";
 import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
 import { parseDMS } from "../../geo/dms.js";
+import { buildProcedureDisplayOptions, buildWaypointLookup, getAllProcedures } from "../../core-v2/procedures/procedureLookup.js";
 import { RjccJaipMapLayer } from "../../map/jaip/RjccJaipMapLayer.jsx";
 import { makePathHelpers } from "../../map/jaip/pathHelpers.js";
+import {
+  defaultFixFilterState,
+  defaultNavaidFilterState,
+  filterFixes,
+  filterLocalizers,
+  filterNavaids,
+  FIX_FILTERS,
+  LABEL_MODES,
+} from "../../map/jaip/semanticFilters.js";
 import ClearanceComposerPanel from "./ClearanceComposerPanel.jsx";
 
 const SVG = { width: 1000, height: 930 };
@@ -24,6 +37,53 @@ const toolbarButtonStyle = {
   cursor: "pointer",
   letterSpacing: "0.04em",
 };
+
+const filterPanelStyle = {
+  position: "absolute",
+  left: 14,
+  top: 58,
+  zIndex: 11,
+  maxWidth: 392,
+  display: "grid",
+  gap: 5,
+  padding: 7,
+  background: "rgba(3,18,22,.72)",
+  border: "1px solid rgba(95,168,179,.22)",
+  borderRadius: 4,
+  fontFamily: "monospace",
+  userSelect: "none",
+};
+
+const filterGroupStyle = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 4,
+};
+
+const filterLabelStyle = {
+  color: "#5fa8b3",
+  fontSize: 10,
+  fontWeight: 900,
+  minWidth: 44,
+};
+
+const filterStatusStyle = {
+  color: "#5fa8b3",
+  fontSize: 10,
+  padding: "3px 2px",
+};
+
+function semanticButtonStyle(active) {
+  return {
+    ...toolbarButtonStyle,
+    padding: "3px 6px",
+    fontSize: 10,
+    background: active ? "rgba(13,82,99,.56)" : "rgba(3,18,22,.34)",
+    color: active ? "#d8fbff" : "#4f8790",
+    borderColor: active ? "rgba(126,198,207,.62)" : "rgba(95,168,179,.24)",
+  };
+}
 
 function getViewportAspect() {
   if (typeof window === "undefined") return SVG.width / SVG.height;
@@ -87,6 +147,9 @@ function projectReferenceItems(items, projection) {
 export default function ChitoseApproachControlAreaReplica({ importedCoastlines }) {
   const coastlines = importedCoastlines?.length ? importedCoastlines : rjccCoastlineHires;
   const [radarLayerState, setRadarLayerState] = useState(defaultRadarLayerState);
+  const [fixFilters, setFixFilters] = useState(defaultFixFilterState);
+  const [navaidFilters, setNavaidFilters] = useState(defaultNavaidFilterState);
+  const [procedureState, setProcedureState] = useState({ show: true, labelMode: "on", selectedIds: ["YOSAN_ONE_DEPARTURE"] });
   const [viewportAspect, setViewportAspect] = useState(getViewportAspect);
   const [view, setView] = useState(() => makeFullViewByAspect(getViewportAspect()));
   const [dragState, setDragState] = useState(null);
@@ -142,8 +205,27 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
   }, [view.w, nmPerSvgUnit]);
 
   const uiScale = Math.min(1, Math.max(0.028, 1 / zoom));
+  const filteredFixes = useMemo(() => filterFixes(rjccFixes, fixFilters), [fixFilters]);
+  const filteredNavaids = useMemo(() => filterNavaids(rjccAirspaceNavaids, navaidFilters), [navaidFilters]);
+  const filteredLocalizers = useMemo(() => filterLocalizers(rjccLocalizers, navaidFilters), [navaidFilters]);
+  const procedures = useMemo(() => getAllProcedures(), []);
+  const procedureOptions = useMemo(() => buildProcedureDisplayOptions(), []);
+  const waypointLookup = useMemo(() => buildWaypointLookup(), []);
 
   const toggleLayer = (key) => setRadarLayerState((prev) => ({ ...prev, [key]: !prev[key] }));
+  const setFixCategory = (category) => setFixFilters((prev) => ({ ...prev, category }));
+  const setFixLabelMode = (labelMode) => setFixFilters((prev) => ({ ...prev, labelMode }));
+  const toggleApproximateFixes = () => setFixFilters((prev) => ({ ...prev, includeApproximate: !prev.includeApproximate }));
+  const toggleNavaidFilter = (key) => setNavaidFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+  const setNavaidLabelMode = (labelMode) => setNavaidFilters((prev) => ({ ...prev, labelMode }));
+  const toggleProcedureVisible = () => setProcedureState((prev) => ({ ...prev, show: !prev.show }));
+  const setProcedureLabelMode = (labelMode) => setProcedureState((prev) => ({ ...prev, labelMode }));
+  const toggleProcedureSelection = (procedureId) => setProcedureState((prev) => {
+    const selected = new Set(prev.selectedIds);
+    if (selected.has(procedureId)) selected.delete(procedureId);
+    else selected.add(procedureId);
+    return { ...prev, selectedIds: [...selected] };
+  });
   const clientToSvgPoint = (event) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const sx = (event.clientX - rect.left) / rect.width;
@@ -194,6 +276,51 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
         <span style={{ color: "#5fa8b3", fontSize: 11, padding: "4px 4px" }}>{zoom.toFixed(1)}x</span>
       </div>
 
+      <div style={filterPanelStyle}>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>FIX</span>
+          {FIX_FILTERS.map((filter) => (
+            <button key={filter.id} type="button" onClick={() => setFixCategory(filter.id)} style={semanticButtonStyle(fixFilters.category === filter.id)}>{filter.label}</button>
+          ))}
+          <span style={filterStatusStyle}>{filteredFixes.length}/{rjccFixes.length}</span>
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>FIX OPT</span>
+          <button type="button" onClick={toggleApproximateFixes} style={semanticButtonStyle(fixFilters.includeApproximate)}>APPROX {fixFilters.includeApproximate ? "ON" : "OFF"}</button>
+          <span style={filterStatusStyle}>LABEL</span>
+          {LABEL_MODES.map((mode) => (
+            <button key={mode} type="button" onClick={() => setFixLabelMode(mode)} style={semanticButtonStyle(fixFilters.labelMode === mode)}>{mode.toUpperCase()}</button>
+          ))}
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>NAVAID</span>
+          <button type="button" onClick={() => toggleNavaidFilter("vorDme")} style={semanticButtonStyle(navaidFilters.vorDme)}>VOR/DME</button>
+          <button type="button" onClick={() => toggleNavaidFilter("tacan")} style={semanticButtonStyle(navaidFilters.tacan)}>TACAN</button>
+          <button type="button" onClick={() => toggleNavaidFilter("ilsLoc")} style={semanticButtonStyle(navaidFilters.ilsLoc)}>ILS/LOC</button>
+          <span style={filterStatusStyle}>{filteredNavaids.length}/{rjccAirspaceNavaids.length} + LOC {filteredLocalizers.length}</span>
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>NAV LAB</span>
+          {LABEL_MODES.map((mode) => (
+            <button key={mode} type="button" onClick={() => setNavaidLabelMode(mode)} style={semanticButtonStyle(navaidFilters.labelMode === mode)}>{mode.toUpperCase()}</button>
+          ))}
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>PROC</span>
+          <button type="button" onClick={toggleProcedureVisible} style={semanticButtonStyle(procedureState.show)}>PROC {procedureState.show ? "ON" : "OFF"}</button>
+          <span style={filterStatusStyle}>LABEL</span>
+          {LABEL_MODES.map((mode) => (
+            <button key={mode} type="button" onClick={() => setProcedureLabelMode(mode)} style={semanticButtonStyle(procedureState.labelMode === mode)}>{mode.toUpperCase()}</button>
+          ))}
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>ROUTE</span>
+          {procedureOptions.map((option) => (
+            <button key={option.id} type="button" onClick={() => toggleProcedureSelection(option.id)} style={semanticButtonStyle(procedureState.selectedIds.includes(option.id))}>{option.label}</button>
+          ))}
+        </div>
+      </div>
+
       <ClearanceComposerPanel />
 
       <svg viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" onWheel={handleWheel} onPointerDown={handleMouseDown} onPointerMove={handleMouseMove} onPointerUp={stopDrag} onPointerCancel={stopDrag} onDoubleClick={(event) => event.preventDefault()} style={{ display: "block", cursor: dragState ? "grabbing" : "grab", touchAction: "none" }}>
@@ -214,8 +341,19 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
           showRunways={radarLayerState.runways}
           showFixes={radarLayerState.fixes}
           showNavaids={radarLayerState.navaids}
+          showLocalizers={radarLayerState.navaids && navaidFilters.ilsLoc}
+          showProcedures={procedureState.show}
           showAca={radarLayerState.aca}
           coastlines={coastlines}
+          fixes={filteredFixes}
+          navaids={filteredNavaids}
+          localizers={filteredLocalizers}
+          procedures={procedures}
+          selectedProcedureIds={procedureState.selectedIds}
+          procedureLabelMode={procedureState.labelMode}
+          waypointLookup={waypointLookup}
+          fixLabelMode={fixFilters.labelMode}
+          navaidLabelMode={navaidFilters.labelMode}
           pointById={chartData.pointById}
           paths={chartData.paths}
         />

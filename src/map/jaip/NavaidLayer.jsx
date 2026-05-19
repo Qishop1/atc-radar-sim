@@ -1,6 +1,13 @@
 import { memo, useMemo } from "react";
 import { navaids as rjccNavaids } from "../../data/airspace/rjcc/navaids.js";
 
+function regularPolygonPoints(sides, radius, startDeg = -90) {
+  return Array.from({ length: sides }, (_, i) => {
+    const angle = (startDeg + i * (360 / sides)) * Math.PI / 180;
+    return `${(Math.cos(angle) * radius).toFixed(2)},${(Math.sin(angle) * radius).toFixed(2)}`;
+  }).join(" ");
+}
+
 function projectNavaid(navaid, projection) {
   if (!Number.isFinite(navaid?.lat) || !Number.isFinite(navaid?.lon)) return null;
   const point = projection.projectLatLon(navaid.lat, navaid.lon);
@@ -8,7 +15,24 @@ function projectNavaid(navaid, projection) {
   return { ...navaid, x: point.x, y: point.y };
 }
 
-export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, projection, uiScale }) {
+function titleForNavaid(navaid) {
+  return [
+    `${navaid.id} ${navaid.name || ""}`.trim(),
+    navaid.type,
+    navaid.dms,
+    navaid.frequencyMHz ? `${navaid.frequencyMHz} MHz` : null,
+    navaid.channel,
+    navaid.alternateChannelNote,
+  ].filter(Boolean).join("\n");
+}
+
+function shouldShowLabels(labelMode, zoom) {
+  if (labelMode === "on") return true;
+  if (labelMode === "off") return false;
+  return zoom >= 1;
+}
+
+export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, projection, zoom = 1, uiScale, labelMode = "auto" }) {
   const projectedNavaids = useMemo(
     () => navaids.map((navaid) => projectNavaid(navaid, projection)).filter(Boolean),
     [navaids, projection]
@@ -16,22 +40,31 @@ export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, pr
   const stroke = "#9ed7df";
   const s = uiScale;
   const size = 5.2 * s;
+  const showLabels = shouldShowLabels(labelMode, zoom);
   const labelStyle = { fill: stroke, fontSize: 10 * s, fontFamily: "monospace", fontWeight: 800 };
 
   return (
     <g id="navaid-layer" opacity="0.9" fill="none" stroke={stroke} strokeWidth="0.7" vectorEffect="non-scaling-stroke">
       {projectedNavaids.map((navaid) => {
-        const hex = Array.from({ length: 6 }, (_, i) => {
-          const angle = (-150 + i * 60) * Math.PI / 180;
-          return `${(Math.cos(angle) * size * 0.82).toFixed(2)},${(Math.sin(angle) * size * 0.82).toFixed(2)}`;
-        }).join(" ");
+        const isTacan = String(navaid.type || "").toUpperCase().includes("TACAN");
+        const hex = regularPolygonPoints(6, size * 0.82, -150);
+        const diamond = regularPolygonPoints(4, size * 1.12, -90);
         return (
           <g key={navaid.id} transform={`translate(${navaid.x} ${navaid.y})`}>
-            <title>{`${navaid.id} ${navaid.name || ""} ${navaid.type || ""}`}</title>
-            <rect x={-size} y={-size} width={size * 2} height={size * 2} vectorEffect="non-scaling-stroke" />
-            <polygon points={hex} vectorEffect="non-scaling-stroke" />
-            <circle cx="0" cy="0" r={0.9 * s} fill={stroke} stroke="none" />
-            <text x={7 * s} y={-7 * s} style={labelStyle} stroke="none">{navaid.id}</text>
+            <title>{titleForNavaid(navaid)}</title>
+            {isTacan ? (
+              <>
+                <polygon points={diamond} vectorEffect="non-scaling-stroke" />
+                <path d={`M ${(-size).toFixed(2)} 0 H ${(size).toFixed(2)} M 0 ${(-size).toFixed(2)} V ${(size).toFixed(2)}`} vectorEffect="non-scaling-stroke" />
+              </>
+            ) : (
+              <>
+                <rect x={-size} y={-size} width={size * 2} height={size * 2} vectorEffect="non-scaling-stroke" />
+                <polygon points={hex} vectorEffect="non-scaling-stroke" />
+                <circle cx="0" cy="0" r={0.9 * s} fill={stroke} stroke="none" />
+              </>
+            )}
+            {showLabels && <text x={7 * s} y={-7 * s} style={labelStyle} stroke="none">{navaid.id}</text>}
           </g>
         );
       })}
