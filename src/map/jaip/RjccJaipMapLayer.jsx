@@ -4,6 +4,8 @@ import { AcaOverlayLayer } from "./AcaOverlayLayer.jsx";
 import { AirportLayer } from "./AirportLayer.jsx";
 import { CoastlineLayer } from "./CoastlineLayer.jsx";
 import { ContourLayer } from "./ContourLayer.jsx";
+import { FixLayer } from "./FixLayer.jsx";
+import { NavaidLayer } from "./NavaidLayer.jsx";
 import { RunwayLayer } from "./RunwayLayer.jsx";
 
 export function RjccJaipMapLayer({
@@ -16,11 +18,15 @@ export function RjccJaipMapLayer({
   showContour,
   showAirports,
   showRunways,
+  showFixes,
+  showNavaids,
   showAca,
   coastlines = rjccCoastlineHires,
   contours = hokkaidoContours,
   airports,
   runways,
+  fixes,
+  navaids,
   pointById,
   paths,
 }) {
@@ -30,6 +36,8 @@ export function RjccJaipMapLayer({
       {showContour && <ContourLayer contours={contours} projection={projection} view={view} zoom={zoom} isZooming={isZooming} />}
       {showRunways && <RunwayLayer runways={runways} projection={projection} zoom={zoom} uiScale={uiScale} />}
       {showAirports && <AirportLayer airports={airports} projection={projection} uiScale={uiScale} />}
+      {showFixes && <FixLayer fixes={fixes} projection={projection} uiScale={uiScale} />}
+      {showNavaids && <NavaidLayer navaids={navaids} projection={projection} uiScale={uiScale} />}
       {showAca && pointById && paths && <AcaOverlayLayer pointById={pointById} paths={paths} uiScale={uiScale} />}
     </>
   );

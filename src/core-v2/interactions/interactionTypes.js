@@ -1,0 +1,5 @@
+export const APP_INITIAL_CONTACT = "APP_INITIAL_CONTACT";
+export const READBACK = "READBACK";
+export const HANDOFF = "HANDOFF";
+export const PILOT_REQUEST = "PILOT_REQUEST";
+export const EMERGENCY_CALL = "EMERGENCY_CALL";

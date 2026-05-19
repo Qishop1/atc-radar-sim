@@ -5,10 +5,11 @@ import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
 import { parseDMS } from "../../geo/dms.js";
 import { RjccJaipMapLayer } from "../../map/jaip/RjccJaipMapLayer.jsx";
 import { makePathHelpers } from "../../map/jaip/pathHelpers.js";
+import ClearanceComposerPanel from "./ClearanceComposerPanel.jsx";
 
 const SVG = { width: 1000, height: 930 };
-const defaultRadarLayerState = { coastline: true, contour: true, aca: true, airports: true, runways: true };
-const radarLayerLabels = { coastline: "COAST", contour: "CONTOUR", aca: "ACA", airports: "AIRPORT", runways: "RWY" };
+const defaultRadarLayerState = { coastline: true, contour: true, aca: true, airports: true, runways: true, navaids: true, fixes: true };
+const radarLayerLabels = { coastline: "COAST", contour: "CONTOUR", aca: "ACA", airports: "AIRPORT", runways: "RWY", navaids: "NAVAID", fixes: "FIX" };
 const USE_COASTLINE_BOUNDS_FOR_RADAR_MAP = true;
 const FALLBACK_BOUNDS = { minLat: 41.0, maxLat: 45.8, minLon: 139.0, maxLon: 146.5 };
 
@@ -193,6 +194,8 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
         <span style={{ color: "#5fa8b3", fontSize: 11, padding: "4px 4px" }}>{zoom.toFixed(1)}x</span>
       </div>
 
+      <ClearanceComposerPanel />
+
       <svg viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" onWheel={handleWheel} onPointerDown={handleMouseDown} onPointerMove={handleMouseMove} onPointerUp={stopDrag} onPointerCancel={stopDrag} onDoubleClick={(event) => event.preventDefault()} style={{ display: "block", cursor: dragState ? "grabbing" : "grab", touchAction: "none" }}>
         <defs>
           <marker id="smallArrow" viewBox="0 0 6 6" refX="5.5" refY="3" markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 6 3 L 0 6 z" fill="#5fa8b3" /></marker>
@@ -209,6 +212,8 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
           showContour={radarLayerState.contour}
           showAirports={radarLayerState.airports}
           showRunways={radarLayerState.runways}
+          showFixes={radarLayerState.fixes}
+          showNavaids={radarLayerState.navaids}
           showAca={radarLayerState.aca}
           coastlines={coastlines}
           pointById={chartData.pointById}

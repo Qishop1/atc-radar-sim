@@ -1,0 +1,11 @@
+export const ENROUTE = "ENROUTE";
+export const DESCENT = "DESCENT";
+export const VECTORING = "VECTORING";
+export const HOLDING = "HOLDING";
+export const ESTABLISHED = "ESTABLISHED";
+export const CLEARED_APPROACH = "CLEARED_APPROACH";
+export const CLEARED_TO_LAND = "CLEARED_TO_LAND";
+export const MISSED_APPROACH = "MISSED_APPROACH";
+export const LANDED = "LANDED";
+export const DIVERTING = "DIVERTING";
+export const MAYDAY = "MAYDAY";

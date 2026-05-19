@@ -1,0 +1,12 @@
+export const RADAR_CONTACT = "RADAR_CONTACT";
+export const EXPECT_APPROACH = "EXPECT_APPROACH";
+export const CONTINUE_APPROACH = "CONTINUE_APPROACH";
+export const ALTITUDE = "ALTITUDE";
+export const SPEED = "SPEED";
+export const HOLD = "HOLD";
+export const VECTOR_HEADING = "VECTOR_HEADING";
+export const DIRECT_FIX = "DIRECT_FIX";
+export const CLEARED_APPROACH = "CLEARED_APPROACH";
+export const CLEARED_TO_LAND = "CLEARED_TO_LAND";
+export const GO_AROUND = "GO_AROUND";
+export const CONTACT_FREQUENCY = "CONTACT_FREQUENCY";
