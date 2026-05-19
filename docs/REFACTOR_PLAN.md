@@ -1,68 +1,94 @@
-# Remaining Refactor Plan
+# App.jsx Refactor Plan
 
-This document summarizes the modularization completed so far and the safest next steps for continuing to reduce `src/App.jsx` without changing gameplay behavior.
+This document tracks the current App.jsx disassembly status for the ATC Radar Simulator.
 
-## Extracted so far
+The refactor goal is structural only: preserve gameplay behavior, keep aircraft mode strings stable, and keep radar extrapolation display-only.
 
-- Core simulator constants, geometry, navigation, aircraft performance, weather, scenarios, state-machine, engine helpers, formatting, separation, and sequencing live under `src/simulator/`.
-- Runway / airport / ILS display geometry helpers live in `src/simulator/runwayGeometry.js`.
-- Ordinary aircraft factories live in `src/simulator/aircraftFactory.js`.
-- Scenario 05 / ADIZ / Foxhound pure helper predicates and planning helpers live in `src/simulator/interceptScenario.js`.
-- Airspace nav, route, SID, hold-pattern helpers live in `src/simulator/airspaceRoutes.js`.
-- Radar display overlays are split from `App.jsx` into `src/components/RadarOverlays.jsx`.
-- Radar display color/label helper utilities live in `src/simulator/radarDisplay.js`.
-- Small arrival / approach boundary helpers live in `src/simulator/arrivalApproach.js`.
+## Extracted So Far
+
+- Constants, geometry, navigation, aircraft performance, weather, scenarios, formatting, separation, sequencing, and state-machine helpers live under `src/simulator/`.
+- Runway, airport, ILS, and visual runway geometry helpers live in `src/simulator/runwayGeometry.js`.
+- Aircraft factory helpers live in `src/simulator/aircraftFactory.js`.
+- Airspace route, SID, hold, and waypoint helpers live in `src/simulator/airspaceRoutes.js`.
+- Arrival boundary helpers live in `src/simulator/arrivalApproach.js`.
+- Military area/corridor helpers live in `src/simulator/military.js` and `src/simulator/militaryBoundary.js`.
+- Scenario 05 pure ADIZ/intercept helpers live in `src/simulator/interceptScenario.js`.
+- Scenario 05 orchestration now lives in `src/simulator/scenario05.js`.
+- Aircraft step, aircraft motion, ILS core, VNAV helpers, missed approach helpers, rollout/fuel-out motion, military target-state resolution, and Scenario 05 aircraft factory helpers now live in `src/simulator/aircraftStep.js`.
+- Delayed command execution, automatic traffic spawning, and scenario traffic/weather/snow timeline events now live in `src/simulator/simulationLoop.js`.
+- Radar target display extrapolation and runway display derived state now live in `src/simulator/radarState.js`.
+- Radar mouse/3D ground interaction helpers now live in `src/simulator/radarInteractions.js`.
+- 3D projection/path helper calculations now live in `src/simulator/radar3D.js`.
+- Tower automation lives in `src/simulator/towerAutomation.js`.
 - Small command patch helpers live in `src/simulator/commands.js`.
-- Tower automation orchestration lives in `src/simulator/towerAutomation.js` with explicit dependencies supplied by `App.jsx`.
-- Small military boundary helpers live in `src/simulator/militaryBoundary.js`.
+- Radar overlay JSX is split into `src/components/RadarOverlays.jsx`.
+- Low/medium-risk panels and controls are split into `src/components/`.
 
-## What remains in `App.jsx`
+## What Remains In App.jsx
 
-`App.jsx` still owns the highest-coupling orchestration and gameplay-sensitive code:
+`App.jsx` is now closer to an orchestration layer, but it still owns:
 
-- React state and UI composition.
-- Main simulation `setInterval` loop.
-- Aircraft list state, radar target snapshots, radar extrapolation state, and selection state.
-- Command event handlers and delayed-command scheduling.
-- ILS capture/guidance resolution and arrival target-state resolution.
-- Aircraft step dispatch and `aircraftMotionStep`.
-- Military target-state resolution and Scenario 05 aircraft factory functions.
-- Tower / runway command handlers and debug spawn handlers.
-- 3D and TWR SVG rendering.
+- Top-level React state, refs, memoized derived state, and effects.
+- Layout composition and wiring of high-level UI components.
+- Runway plan state setters and runway plan command handlers.
+- Selected-aircraft command handlers, including APP/TWR/DEP button behavior and delayed-command dispatch entry points.
+- Start/reset/debug spawn orchestration.
+- Arrival sequence UI ordering handlers.
+- Remaining radar SVG JSX composition.
+- Remaining 3D/TWR JSX rendering and its event handlers.
+- Some display translation glue that depends on current language and `tr`.
 
-## Why arrival / ILS remains high risk
+## Why Some Code Remains
 
-Arrival and ILS code is tightly coupled to mode transitions, runway assignment, tower state, missed approach recovery, landing clearance, VNAV target calculations, and rollout. The high-risk boundaries include:
+- Command handlers still touch many React setters and selected-aircraft inputs. They can be moved with a command-handler factory, but that is a high-risk dependency-injection pass and needs focused manual UI testing.
+- Start/reset orchestration owns many state resets at once. It should move only after a reset/start context object is introduced and verified against Free Play and every scenario.
+- 3D/TWR JSX remains large but is UI-sensitive. It should be extracted as components in a dedicated UI pass, preserving all props and event handlers.
+- Radar SVG composition still wires many overlays, event handlers, and selected target state. It should stay until `RadarScope` can be extracted without changing pan/zoom/select behavior.
 
-- `ILS`, `UNSTABLE_ILS`, `FINAL`, `FINAL_NO_CLEAR`, `TWR_FINAL`, and `FINAL_LAND` transitions.
-- Automatic missed approach due to clearance, tailwind, unstable approach, or runway changes.
-- Reacquiring missed approaches back into arrival flow.
-- Runway-specific route / approach locks.
-- Tower automation using final geometry and landing-clearance state.
+## High-Risk Areas Requiring Manual Review
 
-Future extraction should move one pure helper group at a time and run Scenario 01 / Free Play approach tests after each change.
+- Scenario 05 F-15J / MiG-31 intercept, merge, escort, RJCJ recovery, fuel-out failure, and duplicate spawn prevention.
+- ILS capture, `UNSTABLE_ILS`, final, missed approach, and rollout transition boundaries.
+- APP/TWR/DEP command visibility and automatic tower handoff behavior.
+- Departure aircraft remaining under TWR while on ground.
+- Weather cells staying driven by `weatherTick`, not render ticks.
+- Radar sweep and extrapolation remaining display-layer behavior only.
+- RJCJ mission corridors and mission areas avoiding false civil separation conflicts for paired intercept aircraft.
 
-## Why military core remains high risk
+## Manual Smoke Tests Required
 
-Military logic combines RJCJ departures, mission areas, moving corridors, weather avoidance, fuel/bingo decisions, Scenario 05 intercept behavior, and recovery. The highest-risk boundaries include:
+- Start menu opens.
+- Free Play starts.
+- Scenario 01 starts.
+- Scenario 04 starts and weather displays.
+- Scenario 05 starts without white screen or immediate failure.
+- Aircraft selection works.
+- Selected aircraft panel works.
+- APP/TWR/DEP controls still work.
+- Arrival sequence still displays.
+- Runway planner still works.
+- Radar pan/zoom/select still works.
+- Weather overlays still display.
+- Runway/ILS overlays still display.
+- Mission corridor/ADIZ overlays still display.
+- No startup `ReferenceError` or `TypeError` appears in the browser console.
 
-- Scenario 05 F-15J / MiG-31 spawn, duplicate prevention, intercept, merge, escort, success/failure, and RJCJ recovery.
-- RJCJ fixed-wing and helicopter departure/recovery modes.
-- Mission corridor conflict exceptions for paired intercept aircraft.
-- Fuel-out failure and RTB transitions.
+## Post-Refactor Roadmap
 
-Future extraction should keep Scenario 05 behavior isolated and avoid moving `resolveMilitaryTargetState` until its dependencies are much smaller.
+### P0
 
-## Why `aircraftMotionStep` and the main loop should remain later
+- Radio Log reduction and separate critical alert display.
+- Right-click aircraft command menu.
+- Selected Aircraft Inspector showing state / owner / clearance / next action / risk.
+- Corrected landing geometry with threshold / aim point / touchdown zone / long landing / go-around.
+- Crosswind / tailwind / speed / capture-distance based stable approach model.
 
-`aircraftMotionStep` is the central physics/status integration point for arrivals, departures, military flights, fuel burn, weather avoidance, radar-visible behavior, landing/rollout, and missed approach transitions. Moving it before arrival, military, and command boundaries are cleaner would make regressions hard to diagnose.
+### P1
 
-The main simulation loop should remain in `App.jsx` for now because it coordinates React state updates, tick cadence, weather cadence, aircraft normalization, tower automation, target removal, scoring counters, and radar snapshots.
+- RJCC seasonal weather generation instead of random 360-degree wind.
+- METAR / TAF / ATIS / operational weather summary.
 
-## Recommended next safe steps
+### P2
 
-1. Extract more small presentational 3D/TWR overlay components, leaving state and event handlers in `App.jsx`.
-2. Continue moving pure display helper utilities into `src/simulator/radarDisplay.js` or a future `displayGeometry.js`.
-3. Move additional pure command patch builders into `src/simulator/commands.js`, but keep React handlers local.
-4. Move small missed-approach patch helpers only after adding focused manual tests for ILS, no-clearance final, and missed approach return.
-5. Defer `resolveArrivalTargetState`, `resolveMilitaryTargetState`, `aircraftMotionStep`, and the main loop until dependencies are isolated and each move can be mechanical.
+- Intercept / escort relative-position logic redesign.
+- More scenarios, art, audio, radio voice, polish.
