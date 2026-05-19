@@ -6,7 +6,13 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 
 ## Extracted So Far
 
+- Second-pass line count: `src/App.jsx` went from 1700 lines to 1138 lines. The 600-line target was not reached safely in this pass.
 - Constants, geometry, navigation, aircraft performance, weather, scenarios, formatting, separation, sequencing, and state-machine helpers live under `src/simulator/`.
+- Language/display glue now lives in `src/simulator/displayText.js`.
+- Arrival sequence strip derivation and manual-order helpers now live in `src/simulator/arrivalSequenceState.js`.
+- Scenario completion/failure notices and RJCJ priority notices now live in `src/simulator/scenarioStatus.js`.
+- Start/reset/back-to-menu orchestration now lives in `src/hooks/useSessionController.js`.
+- APP/TWR/DEP command handlers and debug/manual spawn commands now live in `src/hooks/useCommandHandlers.js`.
 - Runway, airport, ILS, and visual runway geometry helpers live in `src/simulator/runwayGeometry.js`.
 - Aircraft factory helpers live in `src/simulator/aircraftFactory.js`.
 - Airspace route, SID, hold, and waypoint helpers live in `src/simulator/airspaceRoutes.js`.
@@ -21,8 +27,9 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 - 3D projection/path helper calculations now live in `src/simulator/radar3D.js`.
 - Tower automation lives in `src/simulator/towerAutomation.js`.
 - Small command patch helpers live in `src/simulator/commands.js`.
-- Radar overlay JSX is split into `src/components/RadarOverlays.jsx`.
+- Radar overlay JSX is split into `src/components/RadarOverlays.jsx`, and the main radar SVG composition now lives in `src/components/RadarScope.jsx`.
 - Low/medium-risk panels and controls are split into `src/components/`.
+- Obsolete 3D View, TWR View, and the top radar/3D/tower tabs were removed. The simulator now keeps the radar view as the primary interface.
 
 ## What Remains In App.jsx
 
@@ -31,19 +38,17 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 - Top-level React state, refs, memoized derived state, and effects.
 - Layout composition and wiring of high-level UI components.
 - Runway plan state setters and runway plan command handlers.
-- Selected-aircraft command handlers, including APP/TWR/DEP button behavior and delayed-command dispatch entry points.
-- Start/reset/debug spawn orchestration.
-- Arrival sequence UI ordering handlers.
-- Remaining radar SVG JSX composition.
-- Remaining 3D/TWR JSX rendering and its event handlers.
-- Some display translation glue that depends on current language and `tr`.
+- Radar pan/zoom/mouse-vector handlers that directly touch the SVG ref and current view box.
+- Debug/selection/layout glue around the already-extracted command/session hooks.
+- Score, count, and small left/right panel wiring values.
+- A large amount of high-level JSX composition for the side panels and command panel.
 
 ## Why Some Code Remains
 
-- Command handlers still touch many React setters and selected-aircraft inputs. They can be moved with a command-handler factory, but that is a high-risk dependency-injection pass and needs focused manual UI testing.
-- Start/reset orchestration owns many state resets at once. It should move only after a reset/start context object is introduced and verified against Free Play and every scenario.
-- 3D/TWR JSX remains large but is UI-sensitive. It should be extracted as components in a dedicated UI pass, preserving all props and event handlers.
-- Radar SVG composition still wires many overlays, event handlers, and selected target state. It should stay until `RadarScope` can be extracted without changing pan/zoom/select behavior.
+- The remaining runway planner handlers still combine runway-state mutation, radio/log updates, and runway candidate logic. They should move in a focused runway-command pass.
+- Radar pan/zoom/select handlers still depend on `svgRef`, current `viewBox`, selected aircraft, and immediate React setters. They can move to a small hook, but require careful browser testing of drag, wheel zoom, and mouse vector assignment.
+- The side-panel JSX is still large. It can be moved into a layout component, but this pass stopped short because command visibility and APP/TWR/DEP button wiring are behavior-sensitive.
+- `aircraftStep`, aircraft motion, Scenario 05 orchestration, and main simulation loop are already outside App; no further high-risk core movement was attempted after build/lint/browser checks passed.
 
 ## High-Risk Areas Requiring Manual Review
 
@@ -57,21 +62,26 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 
 ## Manual Smoke Tests Required
 
-- Start menu opens.
-- Free Play starts.
-- Scenario 01 starts.
-- Scenario 04 starts and weather displays.
-- Scenario 05 starts without white screen or immediate failure.
+- Start menu opens. Verified.
+- Free Play starts. Verified.
+- Scenario 01 starts. Verified.
+- Scenario 04 starts and weather displays. Verified at startup level.
+- Scenario 05 starts without white screen or immediate failure. Verified.
 - Aircraft selection works.
 - Selected aircraft panel works.
-- APP/TWR/DEP controls still work.
-- Arrival sequence still displays.
-- Runway planner still works.
-- Radar pan/zoom/select still works.
-- Weather overlays still display.
-- Runway/ILS overlays still display.
-- Mission corridor/ADIZ overlays still display.
-- No startup `ReferenceError` or `TypeError` appears in the browser console.
+- APP/TWR/DEP controls still render. Verified; command behavior still needs manual click-through.
+- Arrival sequence still displays. Verified.
+- Runway planner still displays. Verified.
+- Radar pan/zoom/select still works. Still requires manual interaction testing.
+- Weather overlays still display. Verified at Scenario 04 startup level.
+- Runway/ILS overlays still display. Verified at startup level.
+- Mission corridor/ADIZ overlays still display. Verified by Scenario 05 startup text and single radar SVG; visual corridor review still recommended.
+- No startup `ReferenceError` or `TypeError` appears in the browser console. Verified.
+
+## Build And Lint
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
 
 ## Post-Refactor Roadmap
 
