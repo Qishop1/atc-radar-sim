@@ -6,13 +6,17 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 
 ## Extracted So Far
 
-- Second-pass line count: `src/App.jsx` went from 1700 lines to 1138 lines. The 600-line target was not reached safely in this pass.
+- Second-pass line count: `src/App.jsx` went from 1700 lines to 1138 lines.
+- Third-pass line count: `src/App.jsx` went from 1138 lines to 700 lines. The 600-line hard target was not fully reached, but the file is now inside the acceptable 600-750 line range.
 - Constants, geometry, navigation, aircraft performance, weather, scenarios, formatting, separation, sequencing, and state-machine helpers live under `src/simulator/`.
 - Language/display glue now lives in `src/simulator/displayText.js`.
 - Arrival sequence strip derivation and manual-order helpers now live in `src/simulator/arrivalSequenceState.js`.
 - Scenario completion/failure notices and RJCJ priority notices now live in `src/simulator/scenarioStatus.js`.
 - Start/reset/back-to-menu orchestration now lives in `src/hooks/useSessionController.js`.
 - APP/TWR/DEP command handlers and debug/manual spawn commands now live in `src/hooks/useCommandHandlers.js`.
+- Runway planning, runway role changes, automatic runway-change delay, scenario runway switching, runway notice derivation, and runway display set derivation now live in `src/hooks/useRunwayPlanner.js`.
+- Radar pan/zoom/mouse-vector handlers now live in `src/hooks/useRadarInteractions.js`.
+- Main page layout, sidebars, scenario-ended overlay, control console JSX, runway notice JSX, weather/airport/status panels, and shell-level wiring now live in `src/components/AppShell.jsx`.
 - Runway, airport, ILS, and visual runway geometry helpers live in `src/simulator/runwayGeometry.js`.
 - Aircraft factory helpers live in `src/simulator/aircraftFactory.js`.
 - Airspace route, SID, hold, and waypoint helpers live in `src/simulator/airspaceRoutes.js`.
@@ -36,19 +40,18 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 `App.jsx` is now closer to an orchestration layer, but it still owns:
 
 - Top-level React state, refs, memoized derived state, and effects.
-- Layout composition and wiring of high-level UI components.
-- Runway plan state setters and runway plan command handlers.
-- Radar pan/zoom/mouse-vector handlers that directly touch the SVG ref and current view box.
-- Debug/selection/layout glue around the already-extracted command/session hooks.
+- High-level hook wiring for command handlers, session control, runway planning, and radar interactions.
+- Selected-aircraft derivation and basic selected-aircraft state synchronization.
+- Simulation effects and high-level scenario/tower/traffic wiring.
 - Score, count, and small left/right panel wiring values.
-- A large amount of high-level JSX composition for the side panels and command panel.
+- A compact `AppShell` props handoff.
 
 ## Why Some Code Remains
 
-- The remaining runway planner handlers still combine runway-state mutation, radio/log updates, and runway candidate logic. They should move in a focused runway-command pass.
-- Radar pan/zoom/select handlers still depend on `svgRef`, current `viewBox`, selected aircraft, and immediate React setters. They can move to a small hook, but require careful browser testing of drag, wheel zoom, and mouse vector assignment.
-- The side-panel JSX is still large. It can be moved into a layout component, but this pass stopped short because command visibility and APP/TWR/DEP button wiring are behavior-sensitive.
-- `aircraftStep`, aircraft motion, Scenario 05 orchestration, and main simulation loop are already outside App; no further high-risk core movement was attempted after build/lint/browser checks passed.
+- `App.jsx` still owns top-level state because splitting state ownership now would risk changing simulation timing and command visibility.
+- The simulation effects still live in App because they coordinate React state updates across aircraft, tower automation, pending commands, weather ticks, and scenario orchestration.
+- Selected-aircraft synchronization remains in App because it directly drives command input state.
+- Score/count derivation remains in App as low-risk glue; it can move later, but it is not bulky enough to justify extra dependency surface in this pass.
 
 ## High-Risk Areas Requiring Manual Review
 
@@ -67,12 +70,14 @@ The refactor goal is structural only: preserve gameplay behavior, keep aircraft 
 - Scenario 01 starts. Verified.
 - Scenario 04 starts and weather displays. Verified at startup level.
 - Scenario 05 starts without white screen or immediate failure. Verified.
-- Aircraft selection works.
-- Selected aircraft panel works.
+- Aircraft selection works. Requires manual click-through after this pass.
+- Selected aircraft panel renders. Verified by control console startup checks; detailed field review still recommended.
 - APP/TWR/DEP controls still render. Verified; command behavior still needs manual click-through.
 - Arrival sequence still displays. Verified.
 - Runway planner still displays. Verified.
+- Runway role changes still work. Requires manual click-through after this pass.
 - Radar pan/zoom/select still works. Still requires manual interaction testing.
+- Mouse vector mode still works. Requires manual click-through after this pass.
 - Weather overlays still display. Verified at Scenario 04 startup level.
 - Runway/ILS overlays still display. Verified at startup level.
 - Mission corridor/ADIZ overlays still display. Verified by Scenario 05 startup text and single radar SVG; visual corridor review still recommended.
