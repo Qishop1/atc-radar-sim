@@ -6,7 +6,9 @@ import { rawPoints } from "../../data/jaip/rjcc/acaPoints.js";
 import { rawNavaids } from "../../data/jaip/rjcc/navaids.js";
 import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
 import { parseDMS } from "../../geo/dms.js";
+import { buildProcedureRoutePreview, expandProcedureRouteEntries } from "../../core-v2/procedures/procedureRouteBuilder.js";
 import { buildProcedureDisplayOptions, buildWaypointLookup, getAllProcedures } from "../../core-v2/procedures/procedureLookup.js";
+import { getFirstAvailableChartOverlay } from "../../core-v2/procedures/chartOverlayLookup.js";
 import { RjccJaipMapLayer } from "../../map/jaip/RjccJaipMapLayer.jsx";
 import { makePathHelpers } from "../../map/jaip/pathHelpers.js";
 import {
@@ -23,6 +25,7 @@ import ClearanceComposerPanel from "./ClearanceComposerPanel.jsx";
 const SVG = { width: 1000, height: 930 };
 const defaultRadarLayerState = { coastline: true, contour: true, aca: true, airports: true, runways: true, navaids: true, fixes: true };
 const radarLayerLabels = { coastline: "COAST", contour: "CONTOUR", aca: "ACA", airports: "AIRPORT", runways: "RWY", navaids: "NAVAID", fixes: "FIX" };
+const PROCEDURE_DETAIL_MODES = ["path", "points", "labels"];
 const USE_COASTLINE_BOUNDS_FOR_RADAR_MAP = true;
 const FALLBACK_BOUNDS = { minLat: 41.0, maxLat: 45.8, minLon: 139.0, maxLon: 146.5 };
 
@@ -149,7 +152,8 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
   const [radarLayerState, setRadarLayerState] = useState(defaultRadarLayerState);
   const [fixFilters, setFixFilters] = useState(defaultFixFilterState);
   const [navaidFilters, setNavaidFilters] = useState(defaultNavaidFilterState);
-  const [procedureState, setProcedureState] = useState({ show: true, labelMode: "on", selectedIds: ["YOSAN_ONE_DEPARTURE"] });
+  const [procedureState, setProcedureState] = useState({ show: true, labelMode: "on", detailMode: "path", approximateGeometry: true, selectedIds: ["YOSAN_ONE_DEPARTURE"] });
+  const [chartOverlayState, setChartOverlayState] = useState({ mode: "off", opacity: 0.45 });
   const [viewportAspect, setViewportAspect] = useState(getViewportAspect);
   const [view, setView] = useState(() => makeFullViewByAspect(getViewportAspect()));
   const [dragState, setDragState] = useState(null);
@@ -211,6 +215,19 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
   const procedures = useMemo(() => getAllProcedures(), []);
   const procedureOptions = useMemo(() => buildProcedureDisplayOptions(), []);
   const waypointLookup = useMemo(() => buildWaypointLookup(), []);
+  const selectedChartOverlay = useMemo(() => getFirstAvailableChartOverlay(procedureState.selectedIds), [procedureState.selectedIds]);
+  const selectedProcedurePointIds = useMemo(() => {
+    const selectedIds = new Set(procedureState.selectedIds);
+    const pointIds = new Set();
+    for (const procedure of expandProcedureRouteEntries(procedures)) {
+      if (!selectedIds.has(procedure.id)) continue;
+      const preview = buildProcedureRoutePreview({ procedure, waypointLookup });
+      for (const point of preview.points || []) {
+        if (point.id) pointIds.add(point.id);
+      }
+    }
+    return pointIds;
+  }, [procedures, procedureState.selectedIds, waypointLookup]);
 
   const toggleLayer = (key) => setRadarLayerState((prev) => ({ ...prev, [key]: !prev[key] }));
   const setFixCategory = (category) => setFixFilters((prev) => ({ ...prev, category }));
@@ -220,6 +237,10 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
   const setNavaidLabelMode = (labelMode) => setNavaidFilters((prev) => ({ ...prev, labelMode }));
   const toggleProcedureVisible = () => setProcedureState((prev) => ({ ...prev, show: !prev.show }));
   const setProcedureLabelMode = (labelMode) => setProcedureState((prev) => ({ ...prev, labelMode }));
+  const setProcedureDetailMode = (detailMode) => setProcedureState((prev) => ({ ...prev, detailMode }));
+  const toggleApproximateProcedureGeometry = () => setProcedureState((prev) => ({ ...prev, approximateGeometry: !prev.approximateGeometry }));
+  const toggleChartOverlayMode = () => setChartOverlayState((prev) => ({ ...prev, mode: prev.mode === "auto" ? "off" : "auto" }));
+  const adjustChartOpacity = (delta) => setChartOverlayState((prev) => ({ ...prev, opacity: Math.min(1, Math.max(0.05, prev.opacity + delta)) }));
   const toggleProcedureSelection = (procedureId) => setProcedureState((prev) => {
     const selected = new Set(prev.selectedIds);
     if (selected.has(procedureId)) selected.delete(procedureId);
@@ -312,6 +333,21 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
           {LABEL_MODES.map((mode) => (
             <button key={mode} type="button" onClick={() => setProcedureLabelMode(mode)} style={semanticButtonStyle(procedureState.labelMode === mode)}>{mode.toUpperCase()}</button>
           ))}
+          <button type="button" onClick={toggleApproximateProcedureGeometry} style={semanticButtonStyle(procedureState.approximateGeometry)}>APPROX TURN {procedureState.approximateGeometry ? "ON" : "OFF"}</button>
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>DETAIL</span>
+          {PROCEDURE_DETAIL_MODES.map((mode) => (
+            <button key={mode} type="button" onClick={() => setProcedureDetailMode(mode)} style={semanticButtonStyle(procedureState.detailMode === mode)}>{mode.toUpperCase()}</button>
+          ))}
+        </div>
+        <div style={filterGroupStyle}>
+          <span style={filterLabelStyle}>CHART</span>
+          <button type="button" onClick={toggleChartOverlayMode} style={semanticButtonStyle(chartOverlayState.mode === "auto")}>CHART {chartOverlayState.mode === "auto" ? "AUTO" : "OFF"}</button>
+          <button type="button" onClick={() => adjustChartOpacity(-0.05)} style={semanticButtonStyle(false)}>OP -</button>
+          <button type="button" onClick={() => adjustChartOpacity(0.05)} style={semanticButtonStyle(false)}>OP +</button>
+          <span style={filterStatusStyle}>OPACITY {Math.round(chartOverlayState.opacity * 100)}%</span>
+          <span style={filterStatusStyle}>{selectedChartOverlay ? `当前航图: ${selectedChartOverlay.title || selectedChartOverlay.chartId}` : "当前航图: none"}</span>
         </div>
         <div style={filterGroupStyle}>
           <span style={filterLabelStyle}>ROUTE</span>
@@ -351,7 +387,13 @@ export default function ChitoseApproachControlAreaReplica({ importedCoastlines }
           procedures={procedures}
           selectedProcedureIds={procedureState.selectedIds}
           procedureLabelMode={procedureState.labelMode}
+          procedureDetailMode={procedureState.detailMode}
+          showApproximateProcedureGeometry={procedureState.approximateGeometry}
+          chartOverlay={selectedChartOverlay}
+          showChartOverlay={chartOverlayState.mode === "auto" && Boolean(selectedChartOverlay)}
+          chartOverlayOpacity={chartOverlayState.opacity}
           waypointLookup={waypointLookup}
+          suppressedFixLabelIds={selectedProcedurePointIds}
           fixLabelMode={fixFilters.labelMode}
           navaidLabelMode={navaidFilters.labelMode}
           pointById={chartData.pointById}

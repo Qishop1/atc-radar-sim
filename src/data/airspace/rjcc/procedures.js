@@ -351,6 +351,318 @@ export const departures = [
       },
     ],
   },
+  {
+    id: "CHITOSE_FOUR_DEPARTURE",
+    name: "CHITOSE FOUR DEPARTURE",
+    type: "SID",
+    navSpec: "CONVENTIONAL",
+    airportId: "RJCC",
+    runwayIds: ["01L", "01R", "19L", "19R"],
+    source: "AIP Japan RJCC AD2.24-SID-1, effective 7 SEP 2023",
+    notes: [
+      "RWY01L/01R: climb RWY HDG until 1NM FM RWY end / CHE 6.3 DME, turn right, direct to CHE VOR/DME within CHE 10DME (5NM FM RWY end).",
+      "Cross 4DME prior to CHE VOR/DME (MKE R330) at or above 3000FT.",
+      "RWY19R/19L: climb direct to CHE VOR/DME.",
+      "Curved turn preview is display-only and approximate.",
+    ],
+    variants: [
+      {
+        id: "CHITOSE_FOUR_RWY01",
+        name: "CHITOSE FOUR RWY01",
+        runwayIds: ["01L", "01R"],
+        previewGeometry: {
+          type: "APPROX_RIGHT_TURN_TO_FIX",
+          fromRunwayEnds: ["19R", "19L"],
+          initialTrack: "RUNWAY_HEADING",
+          initialHeadingDeg: 352.62,
+          initialStraightNm: 1.0,
+          turnRadiusNm: 2.4,
+          maxTurnDeg: 210,
+          sampleCount: 24,
+          turnDirection: "RIGHT",
+          toFixId: "CHE",
+          altitudeGate: {
+            id: "CHITOSE_FOUR_D4_CHE_GATE",
+            stationId: "CHE",
+            distanceNm: 4.0,
+            atOrAboveFt: 3000,
+            label: "D4 CHE 3000",
+            notes: "Altitude constraint gate: cross D4 CHE at or above 3000FT; MKE R330 reference is metadata only.",
+          },
+          turnLimit: {
+            stationId: "CHE",
+            distanceNm: 10.0,
+            distanceFromRunwayEndNm: 5.0,
+          },
+          approximate: true,
+          notes: "Display-only approximation of RWY01 DER climb, right turn, then direct CHE. Not authoritative procedure geometry.",
+        },
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "RUNWAY_HEADING",
+                runwayHeading: true,
+                until: {
+                  distanceFromRunwayEndNm: 1.0,
+                  dme: {
+                    stationId: "CHE",
+                    distanceNm: 6.3,
+                  },
+                },
+                notes: "Climb runway heading until 1NM from runway end / CHE 6.3 DME.",
+              },
+              {
+                type: "TURN_DIRECT_FIX",
+                turnDirection: "RIGHT",
+                fixId: "CHE",
+                within: {
+                  dme: {
+                    stationId: "CHE",
+                    distanceNm: 10.0,
+                  },
+                  distanceFromRunwayEndNm: 5.0,
+                },
+                notes: "Turn right direct CHE within CHE 10DME / 5NM from runway end.",
+              },
+              {
+                type: "RADIAL_DME_CONSTRAINT",
+                stationId: "CHE",
+                distanceNmPriorToStation: 4.0,
+                crossAtOrAboveFt: 3000,
+                referenceRadial: {
+                  stationId: "MKE",
+                  radialDeg: 330,
+                },
+                notes: "Cross 4DME prior to CHE VOR/DME (MKE R330) at or above 3000FT. Metadata only.",
+              },
+              {
+                type: "DIRECT_FIX",
+                fixId: "CHE",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "CHITOSE_FOUR_RWY19",
+        name: "CHITOSE FOUR RWY19",
+        runwayIds: ["19L", "19R"],
+        previewGeometry: {
+          type: "APPROX_DIRECT_TO_FIX",
+          fromRunwayEnds: ["01L", "01R"],
+          initialHeadingDeg: 172.62,
+          toFixId: "CHE",
+          approximate: true,
+          notes: "Display-only approximate direct-to-CHE preview.",
+        },
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 182,
+                fixId: "CHE",
+                notes: "Climb direct to CHE VOR/DME.",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    radialDmeMetadata: [
+      {
+        id: "CHITOSE_FOUR_CHE_D6_3",
+        stationId: "CHE",
+        distanceNm: 6.3,
+        notes: "1NM from RWY end / CHE 6.3 DME; RWY01L/01R",
+      },
+      {
+        id: "CHITOSE_FOUR_CHE_D10",
+        stationId: "CHE",
+        distanceNm: 10.0,
+        notes: "Turn/direct CHE within CHE 10DME / 5NM from RWY end; RWY01L/01R",
+      },
+      {
+        id: "CHITOSE_FOUR_CHE_D4_PRIOR",
+        stationId: "CHE",
+        distanceNmPriorToStation: 4.0,
+        referenceRadial: {
+          stationId: "MKE",
+          radialDeg: 330,
+        },
+        altitude: {
+          atOrAboveFt: 3000,
+        },
+        notes: "Cross 4DME prior to CHE (MKE R330) at or above 3000FT; metadata only",
+      },
+    ],
+  },
+  {
+    id: "KURIS_SEVEN_DEPARTURE",
+    name: "KURIS SEVEN DEPARTURE",
+    type: "SID",
+    navSpec: "CONVENTIONAL",
+    airportId: "RJCC",
+    runwayIds: ["01L", "01R", "19L", "19R"],
+    source: "AIP Japan RJCC AD2.24-SID, effective 7 SEP 2023",
+    notes: [
+      "RWY01L/01R: climb segment exists on chart but full text is not currently available in source extract.",
+      "RWY19R/19L: climb RWY HDG until 1.8NM FM RWY end / CHE 2.0DME, turn left within 6NM, via CHE R011 to KURIS.",
+      "RWY19 preview uses display-only approximate left teardrop geometry.",
+      "CHE R011 and DME constraints are preserved as metadata only.",
+    ],
+    variants: [
+      {
+        id: "KURIS_SEVEN_RWY01",
+        name: "KURIS SEVEN RWY01",
+        runwayIds: ["01L", "01R"],
+        previewGeometry: {
+          type: "APPROX_TURN_TO_RADIAL",
+          fromRunwayEnds: ["19R", "19L"],
+          initialTrack: "RUNWAY_HEADING",
+          initialHeadingDeg: 352.62,
+          turnDirection: "RIGHT",
+          turnStart: {
+            distanceFromRunwayEndNm: 1.0,
+          },
+          turnLimit: {
+            withinNm: 4.0,
+          },
+          interceptDistanceNm: 6.2,
+          interceptRadial: {
+            stationId: "CHE",
+            radialDeg: 11,
+          },
+          toFixId: "KURIS",
+          approximate: true,
+          notes: "Approximate KURIS SEVEN RWY01 join to CHE R011 about 1NM after runway departure end; not authoritative.",
+        },
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "RUNWAY_HEADING",
+                runwayHeading: true,
+                until: {
+                  distanceFromRunwayEndNm: 1.0,
+                },
+                notes: "Display-only approximation: after leaving RWY01, continue about 1NM beyond the departure end before joining CHE R011.",
+              },
+              {
+                type: "TURN_TO_RADIAL",
+                stationId: "CHE",
+                radialDeg: 11,
+                fixId: "KURIS",
+                notes: "Approximate turn/intercept to CHE R011.",
+              },
+              {
+                type: "RADIAL_TO_FIX",
+                stationId: "CHE",
+                radialDeg: 11,
+                fixId: "KURIS",
+                notes: "Via CHE R011 to KURIS.",
+              },
+              {
+                type: "FIX",
+                fixId: "KURIS",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "KURIS_SEVEN_RWY19",
+        name: "KURIS SEVEN RWY19",
+        runwayIds: ["19L", "19R"],
+        previewGeometry: {
+          type: "APPROX_LEFT_TEARDROP_TO_RADIAL",
+          fromRunwayEnds: ["19L", "19R"],
+          initialTrack: "RUNWAY_HEADING",
+          initialHeadingDeg: 172.62,
+          turnDirection: "LEFT",
+          turnStart: {
+            distanceFromRunwayEndNm: 1.8,
+            dme: {
+              stationId: "CHE",
+              distanceNm: 2.0,
+            },
+          },
+          turnLimit: {
+            withinNm: 6.0,
+          },
+          interceptDistanceNm: 8.5,
+          interceptRadial: {
+            stationId: "CHE",
+            radialDeg: 11,
+          },
+          toFixId: "KURIS",
+          approximate: true,
+          notes: "Approximate KURIS SEVEN left teardrop turn to CHE R011; not authoritative.",
+        },
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "RUNWAY_HEADING",
+                runwayHeading: true,
+                until: {
+                  distanceFromRunwayEndNm: 1.8,
+                  dme: {
+                    stationId: "CHE",
+                    distanceNm: 2.0,
+                  },
+                },
+                notes: "Climb runway heading until 1.8NM from runway end / CHE 2.0 DME.",
+              },
+              {
+                type: "LEFT_TURN_TO_RADIAL",
+                stationId: "CHE",
+                radialDeg: 11,
+                withinNm: 6.0,
+                notes: "Turn left within 6NM to intercept CHE R011.",
+              },
+              {
+                type: "RADIAL_TO_FIX",
+                stationId: "CHE",
+                radialDeg: 11,
+                fixId: "KURIS",
+                notes: "Via CHE R011 to KURIS.",
+              },
+              {
+                type: "FIX",
+                fixId: "KURIS",
+              },
+            ],
+          },
+        ],
+        radialDmeMetadata: [
+          {
+            id: "KURIS_SEVEN_CHE_D2",
+            stationId: "CHE",
+            distanceNm: 2.0,
+            notes: "Turn start reference: CHE 2.0 DME / 1.8NM from runway end.",
+          },
+          {
+            id: "KURIS_SEVEN_TURN_WITHIN_6NM",
+            stationId: "CHE",
+            distanceNm: 6.0,
+            notes: "Left turn within 6NM.",
+          },
+          {
+            id: "KURIS_SEVEN_CHE_R011",
+            stationId: "CHE",
+            radialDeg: 11,
+            notes: "Outbound radial to KURIS.",
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 export const approaches = [
