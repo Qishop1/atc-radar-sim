@@ -57,6 +57,22 @@ Critical DME information for MKE, ZYT, SPE, and HWE is preserved as metadata in 
 
 Critical DME and DME GAP information for these SIDs is preserved as metadata only.
 
+`CHITOSE_FOUR_DEPARTURE` uses `CHE` as the coordinate-bearing navaid/fix endpoint and preserves `MKE` R330 / CHE DME references as metadata:
+
+- CHE D6.3
+- CHE D10
+- CHE D4 prior to station
+- MKE R330
+
+No radial/DME coordinates are derived from those references in this task.
+
+`KURIS_SEVEN_DEPARTURE` uses `CHE` and `KURIS`:
+
+- RWY01: display-only approximate join to CHE R011 about 1 NM after the RWY01 departure end, then outbound to `KURIS`.
+- RWY19: display-only approximate left teardrop turn toward CHE R011, then outbound to `KURIS`.
+
+`KURIS` remains the coordinate-bearing fix from `fixes.js`. CHE R011, CHE D2.0, the RWY01 approximate 1NM join, and the 6NM turn limit are preserved as metadata/display context only. KURIS D27.4 CHE remains procedure context and is not used to derive new coordinates.
+
 ## Current Non-Goals
 
 This seed data does not implement SID, STAR, IAC, or AIRAC procedure logic.

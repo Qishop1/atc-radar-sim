@@ -90,14 +90,47 @@ function validateRadialDmeReferences(referenceData, errors, warnings) {
   }
 }
 
-function validateLegGeometry(leg, context, fixIds, errors, warnings) {
-  const supportedPreviewTypes = new Set(["FIX", "FIX_LEG", "HOLD", "HOLD_LEG", "DIRECT_FIX", "HEADING_TO_FIX", "COURSE_LEG"]);
+function validateStationId(stationId, context, navaidIds, warnings) {
+  if (stationId && !navaidIds.has(stationId)) warnings.push({ code: "PROCEDURE_UNKNOWN_NAVAID_REFERENCE", stationId, ...context });
+}
+
+function validateLegGeometry(leg, context, fixIds, navaidIds, errors, warnings) {
+  const supportedPreviewTypes = new Set(["FIX", "FIX_LEG", "HOLD", "HOLD_LEG", "DIRECT_FIX", "HEADING_TO_FIX", "COURSE_LEG", "RUNWAY_HEADING", "TURN_DIRECT_FIX", "RADIAL_DME_CONSTRAINT", "LEFT_TURN_TO_RADIAL", "TURN_TO_RADIAL", "RADIAL_TO_FIX"]);
   if (!supportedPreviewTypes.has(leg.type)) warnings.push({ code: "PROCEDURE_PREVIEW_UNSUPPORTED_GEOMETRY", ...context });
 
   if (leg.type === "HEADING_TO_FIX") {
     if (leg.headingDeg != null && (!isNumber(leg.headingDeg) || Number(leg.headingDeg) < 0 || Number(leg.headingDeg) >= 360)) errors.push({ code: "PROCEDURE_HEADING_TO_FIX_INVALID_HEADING", ...context });
     if (!leg.fixId) errors.push({ code: "PROCEDURE_HEADING_TO_FIX_MISSING_FIX", ...context });
     warnings.push({ code: "PROCEDURE_HEADING_TO_FIX_ENDPOINT_PREVIEW_ONLY", ...context });
+  }
+
+  if (leg.type === "RUNWAY_HEADING") {
+    warnings.push({ code: "PROCEDURE_RUNWAY_HEADING_DISPLAY_ONLY", ...context });
+    validateStationId(leg.until?.dme?.stationId, context, navaidIds, warnings);
+  }
+
+  if (leg.type === "TURN_DIRECT_FIX") {
+    warnings.push({ code: "PROCEDURE_TURN_DIRECT_FIX_APPROXIMATE_PREVIEW", ...context });
+    validateStationId(leg.within?.dme?.stationId, context, navaidIds, warnings);
+  }
+
+  if (leg.type === "RADIAL_DME_CONSTRAINT") {
+    warnings.push({ code: "PROCEDURE_RADIAL_DME_CONSTRAINT_METADATA_ONLY", ...context });
+    validateStationId(leg.stationId, context, navaidIds, warnings);
+    validateStationId(leg.referenceRadial?.stationId, context, navaidIds, warnings);
+    if (leg.referenceRadial?.radialDeg != null && (!isNumber(leg.referenceRadial.radialDeg) || leg.referenceRadial.radialDeg < 0 || leg.referenceRadial.radialDeg >= 360)) errors.push({ code: "PROCEDURE_INVALID_REFERENCE_RADIAL", ...context });
+  }
+
+  if (leg.type === "LEFT_TURN_TO_RADIAL" || leg.type === "TURN_TO_RADIAL") {
+    warnings.push({ code: "PROCEDURE_TURN_TO_RADIAL_APPROXIMATE_PREVIEW", ...context });
+    validateStationId(leg.stationId, context, navaidIds, warnings);
+    if (leg.radialDeg != null && (!isNumber(leg.radialDeg) || leg.radialDeg < 0 || leg.radialDeg >= 360)) errors.push({ code: "PROCEDURE_INVALID_RADIAL", ...context });
+  }
+
+  if (leg.type === "RADIAL_TO_FIX") {
+    warnings.push({ code: "PROCEDURE_RADIAL_TO_FIX_METADATA_PREVIEW", ...context });
+    validateStationId(leg.stationId, context, navaidIds, warnings);
+    if (leg.radialDeg != null && (!isNumber(leg.radialDeg) || leg.radialDeg < 0 || leg.radialDeg >= 360)) errors.push({ code: "PROCEDURE_INVALID_RADIAL", ...context });
   }
 
   if (leg.type === "COURSE_LEG" && !leg.fixId && !leg.endpointFixId && !leg.toFixId) warnings.push({ code: "PROCEDURE_COURSE_LEG_MISSING_ENDPOINT_FOR_PREVIEW", ...context });
@@ -154,14 +187,30 @@ export function validateProcedures({
 
     for (const leg of collectLegs(procedure)) {
       const context = { procedureId: procedure.id, legType: leg.type, fixId: leg.fixId };
-      validateLegGeometry(leg, context, fixIds, errors, warnings);
+      validateLegGeometry(leg, context, fixIds, navaidIds, errors, warnings);
       validateAltitude(leg.altitude, context, errors);
       validateSpeed(leg.speed, context, errors);
+    }
+
+    if (procedure.previewGeometry?.approximate) {
+      warnings.push({ code: "PROCEDURE_APPROX_PREVIEW_NOT_AUTHORITATIVE", procedureId: procedure.id, previewType: procedure.previewGeometry.type });
+      const airportRunways = runwayIdsByAirport.get(procedure.airportId);
+      for (const runwayEndId of procedure.previewGeometry.fromRunwayEnds || []) {
+        if (!airportRunways || !airportRunways.has(runwayEndId)) errors.push({ code: "PROCEDURE_PREVIEW_UNKNOWN_RUNWAY_END", procedureId: procedure.id, runwayEndId });
+      }
+      if (procedure.previewGeometry.toFixId && !fixIds.has(procedure.previewGeometry.toFixId)) errors.push({ code: "PROCEDURE_PREVIEW_UNKNOWN_FIX", procedureId: procedure.id, fixId: procedure.previewGeometry.toFixId });
+      validateStationId(procedure.previewGeometry.interceptRadial?.stationId, { procedureId: procedure.id, previewType: procedure.previewGeometry.type }, navaidIds, warnings);
+      if (procedure.previewGeometry.interceptRadial?.radialDeg != null && (!isNumber(procedure.previewGeometry.interceptRadial.radialDeg) || procedure.previewGeometry.interceptRadial.radialDeg < 0 || procedure.previewGeometry.interceptRadial.radialDeg >= 360)) errors.push({ code: "PROCEDURE_PREVIEW_INVALID_RADIAL", procedureId: procedure.id });
     }
 
     for (const dme of procedure.criticalDme || []) {
       if (!dme?.stationId) warnings.push({ code: "PROCEDURE_CRITICAL_DME_MISSING_STATION", procedureId: procedure.id });
       if (dme?.stationId && !navaidIds.has(dme.stationId)) warnings.push({ code: "PROCEDURE_CRITICAL_DME_UNKNOWN_STATION", procedureId: procedure.id, stationId: dme.stationId });
+    }
+
+    for (const metadata of procedure.radialDmeMetadata || []) {
+      validateStationId(metadata.stationId, { procedureId: procedure.id, metadataId: metadata.id }, navaidIds, warnings);
+      validateStationId(metadata.referenceRadial?.stationId, { procedureId: procedure.id, metadataId: metadata.id }, navaidIds, warnings);
     }
   }
 

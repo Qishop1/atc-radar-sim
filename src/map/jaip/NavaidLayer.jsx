@@ -32,10 +32,23 @@ function shouldShowLabels(labelMode, zoom) {
   return zoom >= 1;
 }
 
-export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, projection, zoom = 1, uiScale, labelMode = "auto" }) {
+function isInView(point, view) {
+  if (!view) return true;
+  const margin = Math.max(view.w || 0, view.h || 0) * 0.12;
+  return point.x >= view.x - margin
+    && point.x <= view.x + view.w + margin
+    && point.y >= view.y - margin
+    && point.y <= view.y + view.h + margin;
+}
+
+export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, projection, view, zoom = 1, uiScale, labelMode = "auto" }) {
   const projectedNavaids = useMemo(
     () => navaids.map((navaid) => projectNavaid(navaid, projection)).filter(Boolean),
     [navaids, projection]
+  );
+  const visibleNavaids = useMemo(
+    () => projectedNavaids.filter((navaid) => isInView(navaid, view)),
+    [projectedNavaids, view]
   );
   const stroke = "#9ed7df";
   const s = uiScale;
@@ -45,7 +58,7 @@ export const NavaidLayer = memo(function NavaidLayer({ navaids = rjccNavaids, pr
 
   return (
     <g id="navaid-layer" opacity="0.9" fill="none" stroke={stroke} strokeWidth="0.7" vectorEffect="non-scaling-stroke">
-      {projectedNavaids.map((navaid) => {
+      {visibleNavaids.map((navaid) => {
         const isTacan = String(navaid.type || "").toUpperCase().includes("TACAN");
         const hex = regularPolygonPoints(6, size * 0.82, -150);
         const diamond = regularPolygonPoints(4, size * 1.12, -90);
