@@ -97,6 +97,260 @@ export const departures = [
       },
     ],
   },
+  {
+    id: "SOSHU_ONE_DEPARTURE",
+    name: "SOSHU ONE DEPARTURE",
+    type: "SID",
+    navSpec: "RNAV1",
+    airportId: "RJCC",
+    runwayIds: ["01L", "01R", "19L", "19R"],
+    source: "AIP Japan RJCC AD2.24-SID-12, effective 7 SEP 2023",
+    notes: [
+      "DME/DME/IRU or GNSS required.",
+      "Radar service required.",
+      "RWY01L/01R: climb on HDG 002 at or above 500FT, direct to CC01T, to CC02T, to CC03T at or above 3000FT, to CHE.",
+      "RWY19R/19L: climb on HDG 182 at or above 500FT, direct to CHE.",
+      "5.0% climb gradient required up to 500FT.",
+    ],
+    initialClimb: [
+      {
+        runwayIds: ["01L", "01R"],
+        headingDeg: 2,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        headingDeg: 182,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+    ],
+    variants: [
+      {
+        id: "SOSHU_ONE_RWY01",
+        name: "SOSHU ONE RWY01",
+        runwayIds: ["01L", "01R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 2,
+                fixId: "CC01T",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to CC01T; preview approximates heading leg as endpoint CC01T because DER coordinates are not represented.",
+              },
+              {
+                type: "FIX",
+                fixId: "CC02T",
+              },
+              {
+                type: "FIX",
+                fixId: "CC03T",
+                altitude: { atOrAboveFt: 3000 },
+              },
+              {
+                type: "DIRECT_FIX",
+                fixId: "CHE",
+              },
+            ],
+          },
+        ],
+        distanceNotes: [
+          { from: "CC01T", to: "CC02T", distanceNm: 4.7, courseDeg: 92 },
+          { from: "CC02T", to: "CC03T", distanceNm: 4.0, courseDeg: 182 },
+          { from: "CC03T", to: "CHE", distanceNm: 8.5, courseDeg: 233.1 },
+        ],
+      },
+      {
+        id: "SOSHU_ONE_RWY19",
+        name: "SOSHU ONE RWY19",
+        runwayIds: ["19L", "19R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 182,
+                fixId: "CHE",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to CHE; preview approximates heading leg as endpoint CHE because DER coordinates are not represented.",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    criticalDme: [
+      {
+        runwayIds: ["01L", "01R"],
+        stationId: "CHE",
+        notes: "2.0NM FM DER - 2.0NM to CC01T",
+      },
+    ],
+    dmeGap: [
+      {
+        runwayIds: ["01L", "01R"],
+        notes: "DER - 2.0NM FM DER; 3.0NM to CHE - CHE",
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        notes: "DER - CHE",
+      },
+    ],
+  },
+  {
+    id: "REZOT_TWO_DEPARTURE",
+    name: "REZOT TWO DEPARTURE",
+    type: "SID",
+    navSpec: "RNAV1",
+    airportId: "RJCC",
+    runwayIds: ["01L", "01R", "19L", "19R"],
+    source: "AIP Japan RJCC AD2.24-SID, effective 7 SEP 2023",
+    notes: [
+      "DME/DME/IRU or GNSS required.",
+      "Radar service required.",
+      "RWY01L/01R: climb on HDG 002 at or above 500FT, direct to CC01T, to CC02T, to CC03T at or above 3000FT, to CHE, to REZOT, to TEKKO at or above 11000FT.",
+      "RWY19R/19L: climb on HDG 182 at or above 500FT, direct to CC06T, to REZOT, to TEKKO at or above 11000FT.",
+      "5.0% climb gradient required up to 500FT.",
+    ],
+    initialClimb: [
+      {
+        runwayIds: ["01L", "01R"],
+        headingDeg: 2,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        headingDeg: 182,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+    ],
+    variants: [
+      {
+        id: "REZOT_TWO_RWY01",
+        name: "REZOT TWO RWY01",
+        runwayIds: ["01L", "01R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 2,
+                fixId: "CC01T",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to CC01T; preview approximates heading leg as endpoint CC01T because DER coordinates are not represented.",
+              },
+              {
+                type: "FIX",
+                fixId: "CC02T",
+              },
+              {
+                type: "FIX",
+                fixId: "CC03T",
+                altitude: { atOrAboveFt: 3000 },
+              },
+              {
+                type: "DIRECT_FIX",
+                fixId: "CHE",
+              },
+              {
+                type: "FIX",
+                fixId: "REZOT",
+              },
+              {
+                type: "FIX",
+                fixId: "TEKKO",
+                altitude: { atOrAboveFt: 11000 },
+              },
+            ],
+          },
+        ],
+        distanceNotes: [
+          { from: "CC01T", to: "CC02T", distanceNm: 4.7, courseDeg: 92 },
+          { from: "CC02T", to: "CC03T", distanceNm: 4.0, courseDeg: 182 },
+          { from: "CC03T", to: "CHE", distanceNm: 8.5, courseDeg: 233.1 },
+          { from: "CHE", to: "REZOT", distanceNm: 20.0, courseDeg: 256 },
+          { from: "REZOT", to: "TEKKO", distanceNm: 9.5, courseDeg: 256 },
+        ],
+      },
+      {
+        id: "REZOT_TWO_RWY19",
+        name: "REZOT TWO RWY19",
+        runwayIds: ["19L", "19R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 182,
+                fixId: "CC06T",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to CC06T; preview approximates heading leg as endpoint CC06T because DER coordinates are not represented.",
+              },
+              {
+                type: "FIX",
+                fixId: "REZOT",
+              },
+              {
+                type: "FIX",
+                fixId: "TEKKO",
+                altitude: { atOrAboveFt: 11000 },
+              },
+            ],
+          },
+        ],
+        distanceNotes: [
+          { from: "CC06T", to: "REZOT", distanceNm: 20.1, courseDeg: 269 },
+          { from: "REZOT", to: "TEKKO", distanceNm: 9.5, courseDeg: 256 },
+        ],
+      },
+    ],
+    criticalDme: [
+      {
+        runwayIds: ["01L", "01R"],
+        stationId: "CHE",
+        notes: "2.0NM FM DER - 2.0NM to CC01T",
+      },
+      {
+        runwayIds: ["01L", "01R"],
+        stationId: "MKE",
+        notes: "CHE - 18.0NM to REZOT",
+      },
+      {
+        runwayIds: ["01L", "01R"],
+        stationId: "ZYT",
+        notes: "CHE - 18.0NM to REZOT",
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        stationId: "MKE",
+        notes: "3.0NM to CC06T - 16.0NM to REZOT; 7.0NM to REZOT - REZOT",
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        stationId: "ZYT",
+        notes: "3.0NM to CC06T - 1.0NM to CC06T; 7.0NM to REZOT - REZOT",
+      },
+    ],
+    dmeGap: [
+      {
+        runwayIds: ["01L", "01R"],
+        notes: "DER - 2.0NM FM DER; 3.0NM to CHE - CHE",
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        notes: "DER - 3.0NM to CC06T",
+      },
+    ],
+  },
 ];
 
 export const approaches = [

@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { buildProcedureRoutePreview } from "../../core-v2/procedures/procedureRouteBuilder.js";
+import { buildProcedureRoutePreview, expandProcedureRouteEntries } from "../../core-v2/procedures/procedureRouteBuilder.js";
 
 function projectPoint(point, projection) {
   if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lon)) return null;
@@ -29,7 +29,7 @@ export const ProcedureRouteLayer = memo(function ProcedureRouteLayer({
 }) {
   const selectedIds = useMemo(() => new Set(selectedProcedureIds), [selectedProcedureIds]);
   const routePreviews = useMemo(
-    () => procedures
+    () => expandProcedureRouteEntries(procedures)
       .filter((procedure) => selectedIds.has(procedure.id))
       .map((procedure) => buildProcedureRoutePreview({ procedure, waypointLookup }))
       .map((preview) => ({

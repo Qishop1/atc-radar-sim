@@ -45,6 +45,18 @@ ILS/LOC facility data is stored separately from coordinate fixes. Localizer reco
 
 Critical DME information for MKE, ZYT, SPE, and HWE is preserved as metadata in `procedures.js`. It is not used to derive coordinates or drive gameplay.
 
+`SOSHU_ONE_DEPARTURE` uses:
+
+- RWY01: `CC01T`, `CC02T`, `CC03T`, `CHE`
+- RWY19: `CHE`
+
+`REZOT_TWO_DEPARTURE` uses:
+
+- RWY01: `CC01T`, `CC02T`, `CC03T`, `CHE`, `REZOT`, `TEKKO`
+- RWY19: `CC06T`, `REZOT`, `TEKKO`
+
+Critical DME and DME GAP information for these SIDs is preserved as metadata only.
+
 ## Current Non-Goals
 
 This seed data does not implement SID, STAR, IAC, or AIRAC procedure logic.

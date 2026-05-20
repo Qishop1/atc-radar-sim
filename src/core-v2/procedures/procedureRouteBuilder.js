@@ -5,6 +5,30 @@ function collectLegs(procedure) {
   return [...segmentLegs, ...directLegs, ...holdLeg];
 }
 
+export function expandProcedureVariants(procedure) {
+  if (!procedure?.variants?.length) return procedure ? [procedure] : [];
+  return procedure.variants.map((variant) => ({
+    ...procedure,
+    ...variant,
+    id: variant.id,
+    name: variant.name || `${procedure.name || procedure.id} ${variant.id}`,
+    type: procedure.type,
+    navSpec: procedure.navSpec,
+    airportId: procedure.airportId,
+    source: variant.source || procedure.source,
+    parentProcedureId: procedure.id,
+    parentProcedureName: procedure.name || procedure.id,
+    notes: [...(procedure.notes || []), ...(variant.notes || [])],
+    criticalDme: variant.criticalDme || procedure.criticalDme,
+    dmeGap: variant.dmeGap || procedure.dmeGap,
+    variants: undefined,
+  }));
+}
+
+export function expandProcedureRouteEntries(procedures = []) {
+  return procedures.flatMap((procedure) => expandProcedureVariants(procedure));
+}
+
 function altitudeConstraintText(altitude) {
   if (!altitude) return null;
   if (altitude.atFt != null) return `${altitude.atFt}`;
@@ -90,5 +114,5 @@ export function buildProcedureRoutePreview({ procedure, waypointLookup = {} } = 
 }
 
 export function buildProcedureRoutePreviews({ procedures = [], waypointLookup = {} } = {}) {
-  return procedures.map((procedure) => buildProcedureRoutePreview({ procedure, waypointLookup }));
+  return expandProcedureRouteEntries(procedures).map((procedure) => buildProcedureRoutePreview({ procedure, waypointLookup }));
 }

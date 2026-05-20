@@ -5,6 +5,7 @@ import { navaids } from "../../data/airspace/rjcc/navaids.js";
 import { arrivals, approaches, departures, holdings } from "../../data/airspace/rjcc/procedures.js";
 import { radialDmeReferences } from "../../data/airspace/rjcc/radialDmeReferences.js";
 import { runways } from "../../data/airspace/rjcc/runways.js";
+import { expandProcedureRouteEntries } from "./procedureRouteBuilder.js";
 
 function isNumber(value) {
   return Number.isFinite(Number(value));
@@ -135,11 +136,11 @@ export function validateProcedures({
     for (const end of runway.ends || []) ids.add(end.id);
   }
 
-  const allProcedures = [
+  const allProcedures = expandProcedureRouteEntries([
     ...(procedureData.arrivals || []),
     ...(procedureData.departures || []),
     ...(procedureData.approaches || []),
-  ];
+  ]);
 
   for (const procedure of allProcedures) {
     if (!procedure?.id) errors.push({ code: "PROCEDURE_MISSING_ID", procedure });

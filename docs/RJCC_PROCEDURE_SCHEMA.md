@@ -21,6 +21,13 @@ The data is intentionally minimal and marked `prototype-placeholder`. It is not 
 
 `YOSAN_ONE_DEPARTURE` is the first real RNAV SID seed. It represents YOSAN ONE DEPARTURE from AIP Japan RJCC AD2.24-SID-20, effective 7 SEP 2023, for RJCC RWY19L/19R.
 
+`SOSHU_ONE_DEPARTURE` and `REZOT_TWO_DEPARTURE` are also present as real RNAV SID seeds. They use runway-dependent `variants` so the route visualizer can show each branch independently:
+
+- `SOSHU_ONE_RWY01`
+- `SOSHU_ONE_RWY19`
+- `REZOT_TWO_RWY01`
+- `REZOT_TWO_RWY19`
+
 ## Lookups And Validation
 
 Core-v2 procedure utilities live in:
@@ -53,7 +60,15 @@ YOSAN ONE DEPARTURE previews through:
 - `YOSAN`
 - `TOBBY`
 
-`HEADING_TO_FIX` is previewed using the endpoint fix only until true heading-leg geometry is implemented. For YOSAN ONE DEPARTURE, the initial heading leg is shown from `CC06T`; DER coordinates are not represented and are not inferred from runway geometry.
+SOSHU ONE RWY01 previews through `CC01T`, `CC02T`, `CC03T`, and `CHE`.
+
+SOSHU ONE RWY19 has only `CHE` as a coordinate endpoint because DER is not represented.
+
+REZOT TWO RWY01 previews through `CC01T`, `CC02T`, `CC03T`, `CHE`, `REZOT`, and `TEKKO`.
+
+REZOT TWO RWY19 previews through `CC06T`, `REZOT`, and `TEKKO`.
+
+`HEADING_TO_FIX` is previewed using the endpoint fix only until true heading-leg geometry is implemented. DER coordinates are not represented and are not inferred from runway geometry.
 
 Radial/DME references are metadata only. They are not used to derive route coordinates yet.
 

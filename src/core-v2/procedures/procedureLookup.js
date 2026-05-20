@@ -5,6 +5,7 @@ import { navaids } from "../../data/airspace/rjcc/navaids.js";
 import { arrivals, approaches, departures, holdings } from "../../data/airspace/rjcc/procedures.js";
 import { radialDmeReferences } from "../../data/airspace/rjcc/radialDmeReferences.js";
 import { runways } from "../../data/airspace/rjcc/runways.js";
+import { expandProcedureRouteEntries } from "./procedureRouteBuilder.js";
 
 function isFiniteLatLon(item) {
   return Number.isFinite(item?.lat) && Number.isFinite(item?.lon);
@@ -21,7 +22,7 @@ function normalizeApproach(procedure) {
 }
 
 export function getProcedureById(id) {
-  return getAllProcedures().find((procedure) => procedure.id === id) || null;
+  return getAllProcedures().find((procedure) => procedure.id === id) || expandProcedureRouteEntries(getAllProcedures()).find((procedure) => procedure.id === id) || null;
 }
 
 export function getApproachesForRunway({ airportId, runwayId } = {}) {
@@ -39,12 +40,13 @@ export function getAllProcedures() {
 }
 
 export function buildProcedureDisplayOptions() {
-  return getAllProcedures().map((procedure) => ({
+  return expandProcedureRouteEntries(getAllProcedures()).map((procedure) => ({
     id: procedure.id,
     label: procedure.name || procedure.id,
     type: procedure.type || (procedure.fixId ? "HOLD" : "PROCEDURE"),
     airportId: procedure.airportId,
     runwayIds: procedure.runwayIds || (procedure.runwayId ? [procedure.runwayId] : []),
+    parentProcedureId: procedure.parentProcedureId,
   }));
 }
 
