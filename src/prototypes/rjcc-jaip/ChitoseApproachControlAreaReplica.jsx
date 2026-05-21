@@ -4,7 +4,7 @@ import { localizers as rjccLocalizers } from "../../data/airspace/rjcc/localizer
 import { navaids as rjccAirspaceNavaids } from "../../data/airspace/rjcc/navaids.js";
 import { rawPoints } from "../../data/jaip/rjcc/acaPoints.js";
 import { rawNavaids } from "../../data/jaip/rjcc/navaids.js";
-import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
+import { hokkaidoRegionPackage } from "../../data/regions/hokkaido/regionPackage.js";
 import { parseDMS } from "../../geo/dms.js";
 import { buildProcedureRoutePreview, expandProcedureRouteEntries } from "../../core-v2/procedures/procedureRouteBuilder.js";
 import { buildProcedureDisplayOptions, buildWaypointLookup, getAllProcedures } from "../../core-v2/procedures/procedureLookup.js";
@@ -148,7 +148,7 @@ function projectReferenceItems(items, projection) {
 }
 
 export default function ChitoseApproachControlAreaReplica({ importedCoastlines }) {
-  const coastlines = importedCoastlines?.length ? importedCoastlines : rjccCoastlineHires;
+  const coastlines = importedCoastlines?.length ? importedCoastlines : hokkaidoRegionPackage.coastline;
   const [radarLayerState, setRadarLayerState] = useState(defaultRadarLayerState);
   const [fixFilters, setFixFilters] = useState(defaultFixFilterState);
   const [navaidFilters, setNavaidFilters] = useState(defaultNavaidFilterState);

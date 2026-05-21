@@ -1,0 +1,12 @@
+{
+  "sector_id": "rjcc",
+  "boundary_id": "rjcc_acc_partial",
+  "type": "ACC_PARTIAL",
+  "source": null,
+  "airac_cycle": null,
+  "boundary": {
+    "polylines": []
+  },
+  "notes": "Future placeholder only. No ACC geometry is verified in this data pack yet."
+}
+

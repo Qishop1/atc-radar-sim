@@ -1,6 +1,6 @@
 import { averagePoint, offsetFromCenter } from "./pathHelpers.js";
 
-function AcaBoundaryRadarLayer({ paths }) {
+export function AcaBoundaryRadarLayer({ paths }) {
   const common = { vectorEffect: "non-scaling-stroke" };
   return (
     <g id="aca-boundary-layer" fill="none" stroke="#2c6f7a" strokeWidth="0.65" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" opacity="0.9">
@@ -113,10 +113,10 @@ function RadarNavaidSymbolLayer({ pointById, uiScale }) {
   );
 }
 
-export function AcaOverlayLayer({ pointById, paths, uiScale }) {
+export function AcaOverlayLayer({ pointById, paths, uiScale, showBoundary = true }) {
   return (
     <>
-      <AcaBoundaryRadarLayer paths={paths} />
+      {showBoundary && <AcaBoundaryRadarLayer paths={paths} />}
       <DmeReferenceLayer pointById={pointById} paths={paths} uiScale={uiScale} />
       <AltitudeLayer pointById={pointById} uiScale={uiScale} />
       <RadarNavaidSymbolLayer pointById={pointById} uiScale={uiScale} />

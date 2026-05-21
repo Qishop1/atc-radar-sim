@@ -1,11 +1,11 @@
 # RJCC JAIP Map Layer
 
-The RJCC JAIP prototype is now split into reusable display-only map layers:
+The RJCC JAIP prototype is now split into reusable display-only map layers with a Canvas-first static geometry path:
 
-- `CoastlineLayer.jsx` renders `rjcc_coastline_hires.json`.
-- `ContourLayer.jsx` renders `hokkaido_contours.json`.
-- `AcaOverlayLayer.jsx` renders the Chitose Approach Control Area, DME references, altitude blocks, and navaid symbols.
-- `RjccJaipMapLayer.jsx` composes the three layers behind the prototype.
+- `CanvasMapLayer.jsx` renders heavy static coastline, contour, and ACA boundary geometry on Canvas.
+- `CoastlineLayer.jsx` and `ContourLayer.jsx` remain as SVG fallback renderers.
+- `AcaOverlayLayer.jsx` renders ACA DME references, altitude blocks, and navaid symbols; its SVG boundary can be used as fallback.
+- `RjccJaipMapLayer.jsx` composes the hybrid Canvas/SVG layers behind the prototype.
 
 These layers are display-only. They are not gameplay geometry, they do not drive aircraft motion, and they do not affect command handling, weather, scoring, tower automation, scenarios, or the state machine.
 
@@ -40,6 +40,7 @@ The isolated prototype at `#/rjcc-jaip` uses the reusable JAIP map layers and ke
 - left-drag pan
 - dynamic NM scale bar
 - full-view aspect-ratio handling
-- contour LOD and wheel-zoom-only temporary degradation
+- contour zoom-based filtering
 - non-scaling strokes
 - ACA boundary, DME, altitude, and navaid rendering
+- canvas static rendering by default, with `staticLayerRenderer="svg"` available as fallback

@@ -1,5 +1,5 @@
-import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
-import hokkaidoContours from "../../data/jaip/rjcc/hokkaido_contours.json";
+import { hokkaidoRegionPackage } from "../../data/regions/hokkaido/regionPackage.js";
+import { CanvasMapLayer } from "../canvas/CanvasMapLayer.jsx";
 import { AcaOverlayLayer } from "./AcaOverlayLayer.jsx";
 import { AirportLayer } from "./AirportLayer.jsx";
 import { ChartOverlayLayer } from "./ChartOverlayLayer.jsx";
@@ -26,8 +26,8 @@ export function RjccJaipMapLayer({
   showLocalizers,
   showProcedures,
   showAca,
-  coastlines = rjccCoastlineHires,
-  contours = hokkaidoContours,
+  coastlines = hokkaidoRegionPackage.coastline,
+  contours = hokkaidoRegionPackage.contours,
   airports,
   runways,
   fixes,
@@ -47,11 +47,25 @@ export function RjccJaipMapLayer({
   navaidLabelMode,
   pointById,
   paths,
+  staticLayerRenderer = "canvas",
 }) {
+  const useCanvasStaticLayers = staticLayerRenderer === "canvas";
+
   return (
     <>
-      {showCoastline && <CoastlineLayer coastlines={coastlines} projection={projection} view={view} zoom={zoom} isZooming={isZooming} />}
-      {showContour && <ContourLayer contours={contours} projection={projection} view={view} zoom={zoom} isZooming={isZooming} />}
+      {useCanvasStaticLayers && (
+        <CanvasMapLayer
+          projection={projection}
+          view={view}
+          zoom={zoom}
+          coastlines={coastlines}
+          contours={contours}
+          showCoastline={showCoastline}
+          showContour={showContour}
+        />
+      )}
+      {!useCanvasStaticLayers && showCoastline && <CoastlineLayer coastlines={coastlines} projection={projection} view={view} zoom={zoom} isZooming={isZooming} />}
+      {!useCanvasStaticLayers && showContour && <ContourLayer contours={contours} projection={projection} view={view} zoom={zoom} isZooming={isZooming} />}
       <ChartOverlayLayer overlay={chartOverlay} enabled={showChartOverlay} opacityOverride={chartOverlayOpacity} />
       {showRunways && <RunwayLayer runways={runways} projection={projection} zoom={zoom} uiScale={uiScale} />}
       {showAirports && <AirportLayer airports={airports} projection={projection} uiScale={uiScale} />}
@@ -59,7 +73,16 @@ export function RjccJaipMapLayer({
       {showNavaids && <NavaidLayer navaids={navaids} projection={projection} view={view} zoom={zoom} uiScale={uiScale} labelMode={navaidLabelMode} />}
       {showLocalizers && <LocalizerLayer localizers={localizers} projection={projection} view={view} zoom={zoom} uiScale={uiScale} labelMode={navaidLabelMode} />}
       {showProcedures && <ProcedureRouteLayer procedures={procedures} selectedProcedureIds={selectedProcedureIds} waypointLookup={waypointLookup} projection={projection} view={view} zoom={zoom} uiScale={uiScale} detailMode={procedureDetailMode} showLabels={procedureLabelMode === "on" || (procedureLabelMode === "auto" && zoom >= 3.8)} showApproximateGeometry={showApproximateProcedureGeometry} />}
-      {showAca && pointById && paths && <AcaOverlayLayer pointById={pointById} paths={paths} uiScale={uiScale} />}
+      {useCanvasStaticLayers && showAca && pointById && paths && (
+        <CanvasMapLayer
+          projection={projection}
+          view={view}
+          zoom={zoom}
+          paths={paths}
+          showAcaBoundary
+        />
+      )}
+      {showAca && pointById && paths && <AcaOverlayLayer pointById={pointById} paths={paths} uiScale={uiScale} showBoundary={!useCanvasStaticLayers} />}
     </>
   );
 }
