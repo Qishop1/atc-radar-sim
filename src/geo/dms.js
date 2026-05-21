@@ -1,3 +1,5 @@
+import { parseJcabCompactDms, parseVatsimDms } from "../data/importers/coordinateParsers.js";
+
 export function parseDMS(value) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value !== "string") return NaN;
@@ -8,6 +10,14 @@ export function parseDMS(value) {
   const hemisphereMatch = text.match(/[NSEW]/i);
   const hemisphere = hemisphereMatch?.[0]?.toUpperCase();
   const sign = hemisphere === "S" || hemisphere === "W" || text.startsWith("-") ? -1 : 1;
+
+  try {
+    if (/^[NSEW]\d{2,3}\.\d{2}\.\d{2}(?:\.\d{1,3})?$/.test(text)) return parseVatsimDms(text);
+    if (/^\d+(?:\.\d+)?[NSEW]$/.test(text)) return parseJcabCompactDms(text);
+  } catch {
+    return NaN;
+  }
+
   const compact = text.replace(/[NSEW]/gi, "").replace(/[+-]/g, "").trim();
   const compactDigits = compact.replace(/\D/g, "");
   const hasSeparators = /[^0-9.]/.test(compact);
