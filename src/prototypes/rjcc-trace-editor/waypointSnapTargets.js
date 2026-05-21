@@ -119,7 +119,9 @@ export function buildWaypointSnapTargets({ fixes = [], navaids = [], runways = [
 }
 
 export function findWaypointSnapTargetById(id, targets = []) {
-  return targets.find((target) => target.id === id) || null;
+  const normalized = String(id || "").trim().toUpperCase();
+  if (!normalized) return null;
+  return targets.find((target) => String(target.id || "").toUpperCase() === normalized) || null;
 }
 
 export function filterWaypointSnapTargets(query, targets = []) {

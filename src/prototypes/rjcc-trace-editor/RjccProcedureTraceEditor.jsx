@@ -447,16 +447,29 @@ export default function RjccProcedureTraceEditor() {
     const fixById = Object.fromEntries(rjccFixes.map((fix) => [fix.id, fix]));
     const navaidById = Object.fromEntries(rjccNavaids.map((navaid) => [navaid.id, navaid]));
     const airportById = Object.fromEntries(rjccAirports.map((airport) => [airport.id, airport]));
+    const rwy01Representative = getRepresentativeDepartureEnd(rjccRunways, "RJCC", ["01L", "01R"]);
+    const rwy19Representative = getRepresentativeDepartureEnd(rjccRunways, "RJCC", ["19L", "19R"]);
+    const rwy01L = getRunwayEndById(rjccRunways, "RJCC", "01L");
+    const rwy01R = getRunwayEndById(rjccRunways, "RJCC", "01R");
+    const rwy19L = getRunwayEndById(rjccRunways, "RJCC", "19L");
+    const rwy19R = getRunwayEndById(rjccRunways, "RJCC", "19R");
     const rawAnchors = {
+      ...Object.fromEntries(rjccFixes.map((fix) => [fix.id, { ...fix, label: `${fix.id} / ${fix.type || "FIX"}` }])),
+      ...Object.fromEntries(rjccNavaids.map((navaid) => [navaid.id, { ...navaid, label: `${navaid.id} / ${navaid.type || "NAVAID"}` }])),
+      ...Object.fromEntries(rjccAirports.map((airport) => [airport.id, { ...airport, label: `${airport.id} / AIRPORT` }])),
       CHE: { ...navaidById.CHE, label: "CHE" },
       KURIS: { ...fixById.KURIS, label: "KURIS" },
       RJCC: { ...airportById.RJCC, label: "RJCC" },
-      RJCC_RWY01_REPRESENTATIVE: getRepresentativeDepartureEnd(rjccRunways, "RJCC", ["01L", "01R"]),
-      RJCC_RWY19_REPRESENTATIVE: getRepresentativeDepartureEnd(rjccRunways, "RJCC", ["19L", "19R"]),
-      RJCC_01L: getRunwayEndById(rjccRunways, "RJCC", "01L"),
-      RJCC_01R: getRunwayEndById(rjccRunways, "RJCC", "01R"),
-      RJCC_19L: getRunwayEndById(rjccRunways, "RJCC", "19L"),
-      RJCC_19R: getRunwayEndById(rjccRunways, "RJCC", "19R"),
+      RJCC_RWY01_REPRESENTATIVE: rwy01Representative,
+      RJCC_RWY19_REPRESENTATIVE: rwy19Representative,
+      RJCC_01L: rwy01L,
+      RJCC_01R: rwy01R,
+      RJCC_19L: rwy19L,
+      RJCC_19R: rwy19R,
+      RJCC_RWY01L: rwy01L,
+      RJCC_RWY01R: rwy01R,
+      RJCC_RWY19L: rwy19L,
+      RJCC_RWY19R: rwy19R,
     };
     const anchors = Object.fromEntries(
       Object.entries(rawAnchors)
@@ -468,7 +481,25 @@ export default function RjccProcedureTraceEditor() {
         })
         .filter(([, anchor]) => anchor)
     );
-    const anchorOptions = Object.entries(anchors).map(([id, anchor]) => ({ id, label: anchor.label || id }));
+    const preferredAnchorIds = [
+      "RJCC_RWY01_REPRESENTATIVE",
+      "RJCC_RWY19_REPRESENTATIVE",
+      "CHE",
+      "KURIS",
+      "RJCC",
+    ];
+    const anchorOptions = Object.entries(anchors)
+      .map(([id, anchor]) => ({ id, label: anchor.label || id }))
+      .sort((a, b) => {
+        const aPreferred = preferredAnchorIds.indexOf(a.id);
+        const bPreferred = preferredAnchorIds.indexOf(b.id);
+        if (aPreferred !== -1 || bPreferred !== -1) {
+          if (aPreferred === -1) return 1;
+          if (bPreferred === -1) return -1;
+          return aPreferred - bPreferred;
+        }
+        return a.id.localeCompare(b.id);
+      });
     return { anchors, anchorOptions, fixById, navaidById, airportById };
   }, [chartData.projection]);
 
@@ -490,8 +521,13 @@ export default function RjccProcedureTraceEditor() {
     [waypointSnapQuery, waypointSnapTargets]
   );
   const selectedWaypointSnapTarget = useMemo(
-    () => findWaypointSnapTargetById(selectedWaypointSnapTargetId, waypointSnapTargets) || filteredWaypointSnapTargets[0] || null,
-    [filteredWaypointSnapTargets, selectedWaypointSnapTargetId, waypointSnapTargets]
+    () => {
+      const selectedInFiltered = findWaypointSnapTargetById(selectedWaypointSnapTargetId, filteredWaypointSnapTargets);
+      if (selectedInFiltered) return selectedInFiltered;
+      if (waypointSnapQuery.trim()) return filteredWaypointSnapTargets[0] || null;
+      return findWaypointSnapTargetById(selectedWaypointSnapTargetId, waypointSnapTargets) || filteredWaypointSnapTargets[0] || null;
+    },
+    [filteredWaypointSnapTargets, selectedWaypointSnapTargetId, waypointSnapTargets, waypointSnapQuery]
   );
   const selectedStation = stationById(rjccNavaids, constructionStationId) || stationOptions[0];
   const anchorConfig = useMemo(() => ({
@@ -641,10 +677,10 @@ export default function RjccProcedureTraceEditor() {
     const constructionDefaults = preset.constructionDefaults || {};
     setTraceId(preset.procedureId);
     setTraceType(preset.traceType || "APPROX_TURN");
-    if (anchorFrame.originId) setOriginAnchorId(anchorFrame.originId);
-    if (anchorFrame.axisToId) setAxisTargetAnchorId(anchorFrame.axisToId);
-    if (anchorFrame.startId) setStartAnchorId(anchorFrame.startId);
-    if (anchorFrame.finalId) setFinalAnchorId(anchorFrame.finalId);
+    if (Object.hasOwn(anchorFrame, "originId")) setOriginAnchorId(anchorFrame.originId || "CHE");
+    if (Object.hasOwn(anchorFrame, "axisToId")) setAxisTargetAnchorId(anchorFrame.axisToId || "");
+    if (Object.hasOwn(anchorFrame, "startId")) setStartAnchorId(anchorFrame.startId || "");
+    if (Object.hasOwn(anchorFrame, "finalId")) setFinalAnchorId(anchorFrame.finalId || "");
     setConstructionStationId(constructionDefaults.stationId || "CHE");
     if (Number.isFinite(constructionDefaults.radialDeg)) setRadialDegInput(constructionDefaults.radialDeg);
     setBearingType(constructionDefaults.bearingType || "MAGNETIC");
@@ -918,6 +954,37 @@ export default function RjccProcedureTraceEditor() {
   const snapSelectedToPoint = (point) => {
     if (!selectedPoint || !point) return;
     replaceTracePoint(selectedPoint.id, point);
+  };
+  const setFinalAnchorAndMaybeAxis = (nextId, { forceAxis = false } = {}) => {
+    setFinalAnchorId(nextId);
+    setAxisTargetAnchorId((prevAxisId) => {
+      if (forceAxis || !prevAxisId || prevAxisId === finalAnchorId) return nextId;
+      return prevAxisId;
+    });
+  };
+  const setStartAnchorFromWaypointTarget = () => {
+    if (!selectedWaypointSnapTarget) {
+      setSnapMessage("请先选择航点/台站/跑道锚点");
+      return;
+    }
+    if (!anchorData.anchors[selectedWaypointSnapTarget.id]) {
+      setSnapMessage(`${selectedWaypointSnapTarget.id} 没有可用坐标，不能设为起点`);
+      return;
+    }
+    setStartAnchorId(selectedWaypointSnapTarget.id);
+    setSnapMessage(`起点已设为 ${selectedWaypointSnapTarget.id}`);
+  };
+  const setFinalAnchorFromWaypointTarget = () => {
+    if (!selectedWaypointSnapTarget) {
+      setSnapMessage("请先选择航点/台站/跑道锚点");
+      return;
+    }
+    if (!anchorData.anchors[selectedWaypointSnapTarget.id]) {
+      setSnapMessage(`${selectedWaypointSnapTarget.id} 没有可用坐标，不能设为终点`);
+      return;
+    }
+    setFinalAnchorAndMaybeAxis(selectedWaypointSnapTarget.id, { forceAxis: true });
+    setSnapMessage(`终点和轴线已设为 ${selectedWaypointSnapTarget.id}`);
   };
   const snapPointToWaypointTarget = (mode) => {
     if (!selectedWaypointSnapTarget) {
@@ -1307,16 +1374,19 @@ export default function RjccProcedureTraceEditor() {
           <div style={rowStyle}>
             <span>轴线</span>
             <select value={axisTargetAnchorId} onChange={(event) => setAxisTargetAnchorId(event.target.value)} style={inputStyle}>
+              <option value="">Select axis</option>
               {anchorData.anchorOptions.map((anchor) => <option key={anchor.id} value={anchor.id}>{anchor.label}</option>)}
             </select>
             <span>起点</span>
             <select value={startAnchorId} onChange={(event) => setStartAnchorId(event.target.value)} style={inputStyle}>
+              <option value="">Select start</option>
               {anchorData.anchorOptions.map((anchor) => <option key={anchor.id} value={anchor.id}>{anchor.label}</option>)}
             </select>
           </div>
           <div style={rowStyle}>
             <span>终点</span>
-            <select value={finalAnchorId} onChange={(event) => setFinalAnchorId(event.target.value)} style={inputStyle}>
+            <select value={finalAnchorId} onChange={(event) => setFinalAnchorAndMaybeAxis(event.target.value)} style={inputStyle}>
+              <option value="">Select final</option>
               {anchorData.anchorOptions.map((anchor) => <option key={anchor.id} value={anchor.id}>{anchor.label}</option>)}
             </select>
           </div>
@@ -1342,7 +1412,10 @@ export default function RjccProcedureTraceEditor() {
           <div style={rowStyle}>
             <input
               value={waypointSnapQuery}
-              onChange={(event) => setWaypointSnapQuery(event.target.value)}
+              onChange={(event) => {
+                setWaypointSnapQuery(event.target.value);
+                setSelectedWaypointSnapTargetId("");
+              }}
               placeholder="搜索航点 / FIX / NAVAID / RWY"
               style={{ ...inputStyle, minWidth: 210 }}
             />
@@ -1373,6 +1446,8 @@ export default function RjccProcedureTraceEditor() {
             <button type="button" onClick={() => snapPointToWaypointTarget("selected")} style={buttonStyle}>选中点吸附到航点</button>
             <button type="button" onClick={() => snapPointToWaypointTarget("first")} style={buttonStyle}>首点吸附到航点</button>
             <button type="button" onClick={() => snapPointToWaypointTarget("last")} style={buttonStyle}>末点吸附到航点</button>
+            <button type="button" onClick={setStartAnchorFromWaypointTarget} style={buttonStyle}>Set start</button>
+            <button type="button" onClick={setFinalAnchorFromWaypointTarget} style={buttonStyle}>Set final</button>
           </div>
           {snapMessage && <div style={{ color: "#d8fbff", fontSize: 10 }}>{snapMessage}</div>}
         </details>

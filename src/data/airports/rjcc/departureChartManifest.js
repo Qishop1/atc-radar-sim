@@ -3,9 +3,9 @@ const SOURCE = "public/charts/rjcc";
 
 const GENERIC_TODO_ANCHOR_FRAME = {
   originId: "CHE",
-  axisToId: "KURIS",
+  axisToId: "",
   startId: "RJCC_RWY19_REPRESENTATIVE",
-  finalId: "KURIS",
+  finalId: "",
 };
 
 const GENERIC_TODO_CONSTRUCTION_DEFAULTS = {
@@ -242,4 +242,3 @@ export const rjccDepartureAuthoringPresets = rjccDepartureChartManifest.flatMap(
     suggestedChartFilename: variant.suggestedChartFilename || chart.filename,
   })),
 );
-
