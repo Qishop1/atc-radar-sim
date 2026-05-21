@@ -10,6 +10,22 @@ v0.5.1 is a pre-release/testing build.
 
 v0.5.1 是预发布/测试版本。
 
+## What this is / 项目定位
+
+A personal-scale ATC radar simulator, RJCC (New Chitose) first, then expanding to Hokkaido and beyond. Built around an offline procedure authoring workflow (chart placement, manual trace, JAIP overlay) rather than real-time navdata pipelines.
+
+一个个人尺度的空管雷达模拟器，以 RJCC（新千岁）为优先目标，后续扩展北海道及更多区域。围绕离线 procedure 制作工作流构建（chart 对齐、人工 trace、JAIP 叠图），不依赖实时 navdata pipeline。
+
+**Not** a real navigation system. **Not** for operational use. **Not** an AIRAC auto-sync platform.
+
+**不是**真实导航系统。**不**用于实际运行。**不是** AIRAC 自动同步平台。
+
+## Companion tools / 配套工具
+
+- [airport-weather-profiler](https://github.com/Qishop1/airport-weather-profiler) — Offline tool that generates the `weather_profile.json` files consumed by this simulator. Designed to run separately from sim runtime; the sim only imports the generated JSON.
+
+  离线工具，生成本模拟器消费的 `weather_profile.json`。设计上与 sim runtime 分离；sim 只导入生成的 JSON。
+
 ## Download / 下载
 
 Windows builds are published on GitHub Releases:
