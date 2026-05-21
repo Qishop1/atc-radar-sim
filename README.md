@@ -1,128 +1,193 @@
 # ATC Radar Simulator / 空管雷达模拟器
 
-Version / 版本: v0.5.1
+Version / 版本: **v0.5.1**
 
-ATC Radar Simulator is a Vite React + Electron air traffic control radar simulator.
+ATC Radar Simulator is a Vite + React + Electron based ATC radar simulation project focused on **RJCC (New Chitose)** as the primary data and workflow baseline.
 
-ATC Radar Simulator 是一个基于 Vite React + Electron 的空管雷达模拟器。
+ATC Radar Simulator 是一个基于 Vite + React + Electron 的空管雷达模拟项目，当前以 **RJCC（新千岁）** 作为主数据与流程基线。
 
-v0.5.1 is a pre-release/testing build.
+> ⚠️ This is a simulation/prototyping project for learning and tooling, **not** an operational navigation system.
+>
+> ⚠️ 本项目用于模拟与工具化开发，**不**是实际运行导航系统。
 
-v0.5.1 是预发布/测试版本。
+---
 
-## What this is / 项目定位
+## Project Positioning / 项目定位
 
-A personal-scale ATC radar simulator, RJCC (New Chitose) first, then expanding to Hokkaido and beyond. Built around an offline procedure authoring workflow (chart placement, manual trace, JAIP overlay) rather than real-time navdata pipelines.
+This project is built around an **offline procedure authoring workflow** rather than real-time AIRAC auto-sync:
 
-一个个人尺度的空管雷达模拟器，以 RJCC（新千岁）为优先目标，后续扩展北海道及更多区域。围绕离线 procedure 制作工作流构建（chart 对齐、人工 trace、JAIP 叠图），不依赖实时 navdata pipeline。
+- chart alignment / chart overlay（航图叠加）
+- manual route tracing（人工航迹描绘）
+- JAIP map layer composition（JAIP 底图组合）
+- display-first procedure preview（以显示验证优先）
 
-**Not** a real navigation system. **Not** for operational use. **Not** an AIRAC auto-sync platform.
+Not goals (current stage):
 
-**不是**真实导航系统。**不**用于实际运行。**不是** AIRAC 自动同步平台。
+- Not an FMS-grade route execution engine
+- Not a real-time navdata ingestion platform
+- Not a production ATC decision support tool
 
-## Companion tools / 配套工具
+当前阶段非目标：
 
-- [airport-weather-profiler](https://github.com/Qishop1/airport-weather-profiler) — Offline tool that generates the `weather_profile.json` files consumed by this simulator. Designed to run separately from sim runtime; the sim only imports the generated JSON.
+- 不是 FMS 级可飞行航线执行引擎
+- 不是实时航行情报自动接入平台
+- 不是生产级管制决策支持系统
 
-  离线工具，生成本模拟器消费的 `weather_profile.json`。设计上与 sim runtime 分离；sim 只导入生成的 JSON。
+---
 
-## Download / 下载
+## Current Architecture Snapshot (v0.5.1) / 当前架构快照
 
-Windows builds are published on GitHub Releases:
+Recent updates establish a **4-layer data package foundation**:
 
-Windows 版本已发布在 GitHub Releases：
+- `src/data/global`
+- `src/data/regions`
+- `src/data/sectors`
+- `src/data/airports`
 
-[Download the latest release / 下载最新版本](https://github.com/Qishop1/atc-radar-sim/releases/latest)
+RJCC is now organized as:
 
-The release provides a `.zip` archive containing the Windows installer `.exe`.
+- **Region package**: Hokkaido basemap aggregation
+- **Sector package**: RJCC sector-level composition (roles, boundaries, flows, frequencies, runway configs)
+- **Airport package**: RJCC airport-level composition (runways, localizers, procedures, chart overlays, manual previews)
 
-Release 中提供了包含 Windows 安装程序 `.exe` 的 `.zip` 压缩包。
+Important boundary clarifications:
 
-Typical release asset:
+- `RJCC Sector != RJCC Airport`
+- `RJCC Sector != RJCC ACA`
+- `rjcc_aca` is a boundary asset referenced by RJCC Sector, not the sector root itself
 
-常见发布文件：
+---
 
-```text
-ATC-Radar-Simulator-Setup-0.5.1.zip
+## Rendering Strategy / 渲染策略
+
+The map stack is now **Canvas-first for heavy static geometry** while preserving SVG/React overlays for interaction.
+
+Canvas static layer currently covers:
+
+- coastline
+- contours
+- ACA boundary stroke
+
+SVG/React remains for:
+
+- chart overlays
+- airports/runways/fixes/navaids/localizers
+- procedure display routes/labels
+- trace-editor interactive controls
+
+This hybrid strategy keeps authoring interactivity while reducing React/SVG pressure on large static geometry.
+
+---
+
+## Procedure Authoring Status / Procedure 制作状态
+
+Current tooling output is **display-layer data** (manual trace / preview), not fully flyable guidance legs.
+
+Verified display seeds:
+
+- **KURIS 7**
+- **CHITOSE 4**
+
+Not yet completed at guidance-engine level:
+
+- full RNAV SID pipeline
+- STAR/APP structured validation pipeline
+- speed/altitude constraint execution model
+
+---
+
+## Data Scope Notes / 数据范围说明
+
+- RJCC is the mainline focus.
+- RJCJ is maintained as an independent airport package placeholder and associated with RJCC sector.
+- ZYTX, ZYTL, and Liaoning currently exist as expansion placeholders only.
+
+---
+
+## Companion Tool / 配套工具
+
+- [airport-weather-profiler](https://github.com/Qishop1/airport-weather-profiler)
+  - Generates offline `weather_profile.json` consumed by this simulator.
+  - 与模拟器运行时解耦，sim 仅加载生成结果。
+
+---
+
+## Install & Run / 安装与运行
+
+### 1) Development (Web)
+
+```bash
+npm run dev
 ```
 
-Extract the `.zip`, then run the installer `.exe`.
+### 2) Development (Electron)
 
-解压 `.zip` 后，运行其中的 `.exe` 安装程序。
-
-## Windows Security Notice / Windows 安全提示
-
-The Windows executable is unsigned. Microsoft SmartScreen may show a warning when opening the installer or app.
-
-Windows 可执行文件未进行代码签名。打开安装包或应用时，Microsoft SmartScreen 可能会显示警告。
-
-## Developer documentation / 开发者文档
-
-For developer onboarding and architecture notes, see/如需查看开发者入门说明和架构笔记，请参阅 [docs/CODEBASE_TOUR.md](docs/CODEBASE_TOUR.md).
-
-
-## Web Development / Web 开发运行
-
-Start the Vite development server:
-
-启动 Vite 开发服务器：
-
-```powershell
-npm.cmd run dev
+```bash
+npm run electron:dev
 ```
 
-## Electron Development / Electron 开发运行
+### 3) Production Web Build
 
-Build the Vite app and launch it in Electron:
-
-构建 Vite 应用并用 Electron 启动：
-
-```powershell
-npm.cmd run electron:dev
+```bash
+npm run build
 ```
 
-## Web Build / Web 构建
-
-Build the production web app:
-
-构建生产版 Web 应用：
-
-```powershell
-npm.cmd run build
-```
-
-The web build is generated in:
-
-Web 构建产物生成在：
+Output:
 
 ```text
 dist/
 ```
 
-## Windows Installer Build / Windows 安装包构建
+### 4) Windows Installer Build
 
-Build the Windows installer:
-
-构建 Windows 安装包：
-
-```powershell
-npm.cmd run dist:win
+```bash
+npm run dist:win
 ```
 
-Local release artifacts are generated in:
-
-本地发布产物生成在：
+Output:
 
 ```text
 release/
 ```
 
-Typical local outputs include:
+---
 
-常见本地输出包括：
+## Download / 下载
 
-```text
-release/ATC Radar Simulator Setup 0.5.1.exe
-release/ATC Radar Simulator Setup 0.5.1.exe.zip
-release/win-unpacked/ATC Radar Simulator.exe
-```
+Latest Windows release:
+
+- https://github.com/Qishop1/atc-radar-sim/releases/latest
+
+Typical artifacts:
+
+- `ATC Radar Simulator Setup 0.5.1.exe`
+- `ATC Radar Simulator Setup 0.5.1.exe.zip`
+
+---
+
+## Windows Security Notice / Windows 安全提示
+
+Windows binaries are currently unsigned. SmartScreen warnings may appear during install/first launch.
+
+Windows 可执行文件当前未签名，安装或首次启动时可能触发 SmartScreen 警告。
+
+---
+
+## Documentation Index / 文档索引
+
+Core docs:
+
+- `docs/CODEBASE_TOUR.md` — project structure onboarding
+- `docs/RJCC_DATA_PACK.md` — RJCC package boundaries and placeholder policy
+- `docs/CANVAS_RENDERER_PLAN.md` — Canvas/SVG hybrid renderer plan
+- `docs/ARCHITECTURE_ROADMAP_V4.md` — long-term roadmap and execution priorities
+- `docs/RJCC_MANUAL_PREVIEW_AND_CHART_OVERLAY_WORKFLOW.md` — chart/trace workflow
+- `docs/RJCC_PROCEDURE_SCHEMA.md` — procedure data schema guidance
+
+---
+
+## Disclaimer / 免责声明
+
+This repository is for simulation, visualization, and engineering exploration. Do not use it for real-world ATC operations, flight planning, or safety-critical navigation decisions.
+
+本仓库用于模拟、可视化与工程探索，请勿用于实际空管运行、真实飞行计划或任何安全关键导航决策。
