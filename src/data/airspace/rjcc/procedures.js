@@ -351,6 +351,90 @@ export const departures = [
       },
     ],
   },
+    {
+    id: "DALBI_ONE_DEPARTURE",
+    name: "DALBI ONE DEPARTURE",
+    type: "SID",
+    navSpec: "RNAV1",
+    airportId: "RJCC",
+    runwayIds: ["01L", "01R", "19L", "19R"],
+    source: "AIP Japan RJCC AD2.24-SID, chart-derived display seed",
+    notes: [
+      "DME/DME/IRU or GNSS required.",
+      "Radar service required.",
+      "Display-layer route seed for RJCC Procedure Atlas.",
+      "RWY01L/01R: direct to CC01T, to CC02T, to CC03T, to KUGIE, to POWAN, to ZALAR, to DALBI.",
+      "RWY19L/19R: direct to NEJIE, to POWAN, to ZALAR, to DALBI.",
+      "This entry is display/atlas data only; not aircraft guidance.",
+    ],
+    initialClimb: [
+      {
+        runwayIds: ["01L", "01R"],
+        headingDeg: 2,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+      {
+        runwayIds: ["19L", "19R"],
+        headingDeg: 182,
+        atOrAboveFt: 500,
+        climbGradientPercentUntilFt: 500,
+      },
+    ],
+    variants: [
+      {
+        id: "DALBI_ONE_RWY01",
+        name: "DALBI ONE RWY01",
+        runwayIds: ["01L", "01R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 2,
+                fixId: "CC01T",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to CC01T; display preview approximates heading leg as endpoint CC01T.",
+              },
+              { type: "FIX", fixId: "CC02T" },
+              {
+                type: "FIX",
+                fixId: "CC03T",
+                altitude: { atOrAboveFt: 3000 },
+              },
+              { type: "FIX", fixId: "KUGIE" },
+              { type: "FIX", fixId: "POWAN" },
+              { type: "FIX", fixId: "ZALAR" },
+              { type: "FIX", fixId: "DALBI" },
+            ],
+          },
+        ],
+      },
+      {
+        id: "DALBI_ONE_RWY19",
+        name: "DALBI ONE RWY19",
+        runwayIds: ["19L", "19R"],
+        segments: [
+          {
+            id: "main",
+            legs: [
+              {
+                type: "HEADING_TO_FIX",
+                headingDeg: 182,
+                fixId: "NEJIE",
+                altitude: { atOrAboveFt: 500 },
+                notes: "DER to NEJIE; display preview approximates heading leg as endpoint NEJIE.",
+              },
+              { type: "FIX", fixId: "POWAN" },
+              { type: "FIX", fixId: "ZALAR" },
+              { type: "FIX", fixId: "DALBI" },
+            ],
+          },
+        ],
+      },
+    ],
+  },
   {
     id: "CHITOSE_FOUR_DEPARTURE",
     name: "CHITOSE FOUR DEPARTURE",

@@ -42,7 +42,7 @@ export const fixes = [
   { id: "MISTA", type: "RNAV", lat: 42.3791111, lon: 141.3867778, dms: "422244.8N / 1412312.4E", notes: "YOSAN ONE", source: SOURCE },
   { id: "NACKS", type: "RNAV / IF", lat: 43.0001944, lon: 141.6506944, dms: "430000.7N / 1413902.5E", altitudeConstraintText: "3000", notes: "NACKS STAR / RWY19R IF", source: SOURCE },
   { id: "NAVER", type: "RNAV / holding fix", lat: 42.1289444, lon: 141.5246944, dms: "420744.2N / 1413128.9E", altitudeConstraintText: "holding MHA 6000, MAX 230 KIAS", notes: "STAR common / CHE R201 D35.0", reference: { navaidId: "CHE", radialDeg: 201, distanceNm: 35.0, raw: "R201/D35.0 CHE" }, source: SOURCE },
-  { id: "NEJIE", type: "RNAV", lat: 42.7261667, lon: 141.7290556, dms: "424334.2N / 1414344.6E", notes: "DALBI ONE RWY19", source: SOURCE },
+  { id: "NEJIE", type: "RNAV", lat: 42.5761667, lon: 141.7290556, dms: "423434.2N / 1414344.6E", notes: "DALBI ONE RWY19", source: SOURCE },
   { id: "NESIC", type: "Approach fix / FAF", lat: 42.8843111, lon: 141.6748944, dms: "425303.52N / 1414029.62E", altitudeConstraintText: "FAF", notes: "ILS/LOC RWY19L/R", source: SOURCE },
   { id: "NIKAP", type: "RNAV", lat: 42.4359167, lon: 141.8823611, dms: "422609.3N / 1415256.5E", altitudeConstraintText: "10000", notes: "YUNEY EAST", source: SOURCE },
   { id: "NOHEY", type: "RNAV", lat: 41.6107778, lon: 141.4375556, dms: "413638.8N / 1412615.2E", altitudeConstraintText: "at or above FL250", notes: "PANSY / BUTOS Transition", source: SOURCE },

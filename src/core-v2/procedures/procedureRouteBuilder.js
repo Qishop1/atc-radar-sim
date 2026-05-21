@@ -157,6 +157,11 @@ function manualPreviewForProcedure(procedureId) {
   return procedureId ? manualProcedurePreviews[procedureId] || null : null;
 }
 
+function isRnavProcedure(procedure) {
+  const navSpec = `${procedure?.navSpec || ""}`.toUpperCase();
+  return navSpec.includes("RNAV");
+}
+
 function buildManualPreviewRoute({ procedure, manualPreview, waypointLookup }) {
   const warnings = ["Using manual display-only trace geometry."];
   const finalId = manualPreview?.anchorFrame?.finalId;
@@ -203,13 +208,24 @@ export function buildProcedureRoutePreview({ procedure, waypointLookup = {} } = 
   const warnings = [];
   const points = [];
   const procedureId = procedure?.id || null;
+  const rnavProcedure = isRnavProcedure(procedure);
   const manualPreview = manualPreviewForProcedure(procedureId);
 
-  if (manualPreview) {
+  if (manualPreview && !rnavProcedure) {
     return buildManualPreviewRoute({ procedure, manualPreview, waypointLookup });
   }
 
-  const approximateGeometry = buildApproximateProcedureGeometry({ procedure, waypointLookup });
+  if (manualPreview && rnavProcedure) {
+    warnings.push("RNAV manual trace ignored in JAIP route preview; RNAV display preview uses fix-to-fix polyline only.");
+  }
+
+  const approximateGeometry = rnavProcedure
+    ? { approximateSegments: [], warnings: [] }
+    : buildApproximateProcedureGeometry({ procedure, waypointLookup });
+
+  if (rnavProcedure && procedure?.previewGeometry?.approximate) {
+    warnings.push("RNAV previewGeometry ignored; RNAV display preview uses fix-to-fix polyline only.");
+  }
   warnings.push(...approximateGeometry.warnings);
 
   for (const leg of collectLegs(procedure)) {
