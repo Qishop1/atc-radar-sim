@@ -35,6 +35,14 @@ Not goals (current stage):
 
 ---
 
+## Companion tools / 配套工具
+
+- [airport-weather-profiler](https://github.com/Qishop1/airport-weather-profiler) — Offline tool that generates the `weather_profile.json` files consumed by this simulator. Designed to run separately from sim runtime; the sim only imports the generated JSON.
+
+  离线工具，生成本模拟器消费的 `weather_profile.json`。设计上与 sim runtime 分离；sim 只导入生成的 JSON。
+
+---
+
 ## Current Architecture Snapshot (v0.5.1) / 当前架构快照
 
 Recent updates establish a **4-layer data package foundation**:
