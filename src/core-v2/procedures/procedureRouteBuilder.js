@@ -88,6 +88,55 @@ function appendPoint(points, point) {
   points.push(point);
 }
 
+function explicitStartAnchorId(procedure) {
+  return procedure?.startAnchorId
+    || procedure?.startId
+    || procedure?.anchorFrame?.startId
+    || procedure?.routeBuilder?.startId
+    || procedure?.manualPreview?.anchorFrame?.startId
+    || null;
+}
+
+function runwayStartAnchorId(procedure) {
+  const airportId = procedure?.airportId || "RJCC";
+  const runwayIds = procedure?.runwayIds || (procedure?.runwayId ? [procedure.runwayId] : []);
+  const normalized = runwayIds.map((id) => String(id || "").toUpperCase()).filter(Boolean);
+  if (!normalized.length) return null;
+  if (normalized.every((id) => id.startsWith("01"))) return `${airportId}_RWY01_REPRESENTATIVE`;
+  if (normalized.every((id) => id.startsWith("19"))) return `${airportId}_RWY19_REPRESENTATIVE`;
+  return null;
+}
+
+function startAnchorIdForProcedure(procedure) {
+  return explicitStartAnchorId(procedure) || runwayStartAnchorId(procedure);
+}
+
+function appendRnavStartAnchor(points, procedure, waypointLookup, warnings) {
+  if (!isRnavProcedure(procedure)) return;
+  const startAnchorId = startAnchorIdForProcedure(procedure);
+  if (!startAnchorId) {
+    warnings.push("RNAV start connector skipped: no start anchor or single-runway-family runwayIds are available.");
+    return;
+  }
+
+  const waypoint = waypointLookup[startAnchorId];
+  if (!waypoint || !Number.isFinite(waypoint.lat) || !Number.isFinite(waypoint.lon)) {
+    warnings.push(`RNAV start connector skipped: missing coordinate start anchor ${startAnchorId}.`);
+    return;
+  }
+
+  appendPoint(points, {
+    id: startAnchorId,
+    lat: waypoint.lat,
+    lon: waypoint.lon,
+    role: "rnav-start-anchor",
+    altitudeConstraintText: null,
+    speedConstraintText: null,
+    sourceLeg: null,
+    displayOnly: true,
+  });
+}
+
 function runwayEndWaypoint(waypointLookup, airportId, runwayEndId) {
   return waypointLookup[`${airportId}:${runwayEndId}`] || waypointLookup[runwayEndId] || null;
 }
@@ -252,6 +301,8 @@ export function buildProcedureRoutePreview({ procedure, waypointLookup = {} } = 
     warnings.push("RNAV previewGeometry ignored; RNAV display preview uses fix-to-fix polyline only.");
   }
   warnings.push(...approximateGeometry.warnings);
+
+  appendRnavStartAnchor(points, procedure, waypointLookup, warnings);
 
   for (const leg of collectLegs(procedure)) {
     const legType = leg?.type || "FIX";

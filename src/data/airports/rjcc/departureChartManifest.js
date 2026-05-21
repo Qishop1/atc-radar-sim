@@ -88,7 +88,14 @@ function pendingTracePreset({
   routeFixes = [],
   runwayIds = [],
   navSpec = null,
+  anchorFrame = null,
 }) {
+  const normalizedRunwayIds = runwayIds.map((runwayId) => String(runwayId || "").toUpperCase());
+  const startId = normalizedRunwayIds.length && normalizedRunwayIds.every((runwayId) => runwayId.startsWith("01"))
+    ? "RJCC_RWY01_REPRESENTATIVE"
+    : normalizedRunwayIds.length && normalizedRunwayIds.every((runwayId) => runwayId.startsWith("19"))
+      ? "RJCC_RWY19_REPRESENTATIVE"
+      : GENERIC_TODO_ANCHOR_FRAME.startId;
   return {
     id,
     label,
@@ -109,7 +116,10 @@ function pendingTracePreset({
     endpointId,
     traceType: "APPROX_TURN",
     coordinateSpace: "anchor-normalized",
-    anchorFrame: GENERIC_TODO_ANCHOR_FRAME,
+    anchorFrame: anchorFrame || {
+      ...GENERIC_TODO_ANCHOR_FRAME,
+      startId,
+    },
     constructionDefaults: GENERIC_TODO_CONSTRUCTION_DEFAULTS,
     notes: "TODO chart-only authoring preset. Display trace, route fixes, and legs are intentionally empty until manual tracing.",
   };

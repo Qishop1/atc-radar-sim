@@ -19,12 +19,14 @@ import { buildRadialDmePoint, projectPointToRadial, snapPointToDmeCircle, neares
 import { deriveProcedureTraceSetup } from "./deriveProcedureTraceSetup.js";
 import { getManualPreviewPreset, manualPreviewPresets } from "./manualPreviewPresets.js";
 import { getRepresentativeDepartureEnd, getRunwayEndById } from "./runwayAnchors.js";
+import { clearDraft, hasDraft, loadDraftWithMeta, loadLastDraftPresetId, saveDraft, saveLastDraftPresetId } from "./traceEditorDraftStorage.js";
 import { TRACE_TYPES, TraceEditorLayer } from "./TraceEditorLayer.jsx";
 import { buildWaypointSnapTargets, filterWaypointSnapTargets, findWaypointSnapTargetById } from "./waypointSnapTargets.js";
 
 const SVG = { width: 1000, height: 930 };
 const FALLBACK_BOUNDS = { minLat: 41.0, maxLat: 45.8, minLon: 139.0, maxLon: 146.5 };
 const DEFAULT_TRACE_ID = "KURIS_SEVEN_RWY19";
+const DEFAULT_NOTES = "Display-only traced preview; not authoritative navigation geometry.";
 const PROCEDURE_ID_PATTERN = /^[A-Z0-9_]+$/;
 const ACCEPTED_CHART_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const CONSTRUCTION_PRESETS = ["NONE", "KURIS_7_RWY19", "KURIS_7_RWY01", "CHITOSE_4_RWY01", "CUSTOM"];
@@ -195,6 +197,13 @@ function clientToSvgPoint(event, view) {
 
 function formatNumber(value) {
   return Number.isFinite(value) ? Number(value.toFixed(6)) : null;
+}
+
+function formatDraftTime(savedAt) {
+  if (!savedAt) return "";
+  const date = new Date(savedAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function round(value, digits = 4) {
@@ -409,9 +418,15 @@ export default function RjccProcedureTraceEditor() {
   const [waypointSnapQuery, setWaypointSnapQuery] = useState("");
   const [selectedWaypointSnapTargetId, setSelectedWaypointSnapTargetId] = useState("KURIS");
   const [snapMessage, setSnapMessage] = useState("");
-  const [notes, setNotes] = useState("Display-only traced preview; not authoritative navigation geometry.");
+  const [notes, setNotes] = useState(DEFAULT_NOTES);
+  const [draftStatus, setDraftStatus] = useState("No local draft");
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
+  const [draftWarning, setDraftWarning] = useState("");
   const zoomEndTimerRef = useRef(null);
   const droppedObjectUrlRef = useRef(null);
+  const draftAutosaveTimerRef = useRef(null);
+  const draftStorageReadyRef = useRef(false);
+  const skipNextDraftAutosaveRef = useRef(true);
 
   useEffect(() => {
     const onResize = () => {
@@ -432,6 +447,7 @@ export default function RjccProcedureTraceEditor() {
 
   useEffect(() => () => {
     if (droppedObjectUrlRef.current) URL.revokeObjectURL(droppedObjectUrlRef.current);
+    window.clearTimeout(draftAutosaveTimerRef.current);
   }, []);
 
   const fullView = useMemo(() => makeFullViewByAspect(viewportAspect), [viewportAspect]);
@@ -440,6 +456,7 @@ export default function RjccProcedureTraceEditor() {
   const selectedBaseChart = CHART_OVERLAY_OPTIONS.find((chart) => chart.id === selectedChartId) || CHART_OVERLAY_OPTIONS[0];
   const selectedChart = selectedChartId === "custom" && droppedChart ? droppedChart : selectedBaseChart;
   const selectedManualPreset = getManualPreviewPreset(manualPresetId);
+  const draftPresetId = selectedManualPreset?.id || (manualPresetId === "CUSTOM" ? traceId || DEFAULT_TRACE_ID : manualPresetId || traceId || DEFAULT_TRACE_ID);
 
   const chartData = useMemo(() => {
     const bounds = boundsFromCoastlines(rjccCoastlineHires);
@@ -680,6 +697,120 @@ export default function RjccProcedureTraceEditor() {
     ...(!tracePoints.length && !routeFixes.length ? ["Route has zero trace points and zero routeFixes."] : []),
     ...unresolvedRouteFixes.map((id) => `Route fix ${id} is unresolved.`),
   ], [exportChartId, exportProcedureId, finalAnchorId, routeFixes.length, selectedManualPreset, startAnchorId, tracePoints.length, unresolvedRouteFixes]);
+  const draftSnapshot = useMemo(() => ({
+    version: 1,
+    airportId: "RJCC",
+    tool: "rjcc-trace-editor",
+    presetId: draftPresetId,
+    selectedPresetId: manualPresetId,
+    procedureId: traceId,
+    chartId: resolvedChartId || selectedManualPreset?.chartId || selectedChart.id,
+    chartSelection: {
+      selectedChartId,
+      resolvedChartId,
+      resolvedChartTitle,
+      resolvedChartFilename,
+      coordinateSpace: resolvedCoordinateSpace,
+    },
+    chartTransform: overlayTransform,
+    overlayVisible,
+    overlay: overlayExport,
+    anchorFrame: {
+      originId: originAnchorId,
+      axisToId: axisTargetAnchorId,
+      startId: startAnchorId,
+      finalId: finalAnchorId,
+    },
+    routeFixes,
+    traceType,
+    segmentType: traceType,
+    points: tracePoints,
+    rawProjectedPoints: tracePoints.map(formatProjectedPoint),
+    normalizedPoints: anchorExport?.points || [],
+    constructionItems: constructionItems.map(serializeConstructionItem),
+    generatedDisplayRoute: traceType === "SOLID_ROUTE" ? {
+      traceType: "route-solid",
+      startId: startAnchorId || null,
+      finalId: finalAnchorId || null,
+      routeFixes,
+      points: tracePoints,
+    } : null,
+    editorState: {
+      nudgeStep,
+      notes,
+      constructionPreset,
+      showPointLabels,
+      mapLabelMode,
+      showRadials,
+      showDme,
+      showArcs,
+      showAux,
+      showAnchors,
+      showConstructionLabels,
+      constructionStationId,
+      radialDegInput,
+      radialLengthNmInput,
+      bearingType,
+      magneticVariationDeg,
+      dmeRadiusNmInput,
+      arcRadiusNmInput,
+      arcStartBearingInput,
+      arcEndBearingInput,
+      selectedConstructionItemId,
+      constructionClickMode,
+      waypointSnapQuery,
+      selectedWaypointSnapTargetId,
+      selectedPointId,
+    },
+  }), [
+    anchorExport,
+    arcEndBearingInput,
+    arcRadiusNmInput,
+    arcStartBearingInput,
+    axisTargetAnchorId,
+    bearingType,
+    constructionClickMode,
+    constructionItems,
+    constructionPreset,
+    constructionStationId,
+    dmeRadiusNmInput,
+    draftPresetId,
+    finalAnchorId,
+    magneticVariationDeg,
+    manualPresetId,
+    mapLabelMode,
+    notes,
+    nudgeStep,
+    originAnchorId,
+    overlayExport,
+    overlayTransform,
+    overlayVisible,
+    radialDegInput,
+    radialLengthNmInput,
+    resolvedChartFilename,
+    resolvedChartId,
+    resolvedChartTitle,
+    resolvedCoordinateSpace,
+    routeFixes,
+    selectedChart.id,
+    selectedChartId,
+    selectedConstructionItemId,
+    selectedManualPreset,
+    selectedPointId,
+    selectedWaypointSnapTargetId,
+    showAnchors,
+    showArcs,
+    showAux,
+    showConstructionLabels,
+    showDme,
+    showPointLabels,
+    showRadials,
+    startAnchorId,
+    traceId,
+    tracePoints,
+    traceType,
+    waypointSnapQuery,
+  ]);
 
   const updateOverlay = (patch) => setOverlayTransform((prev) => ({ ...prev, ...patch }));
   const nudgeOverlay = (dx, dy) => setOverlayTransform((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
@@ -716,6 +847,112 @@ export default function RjccProcedureTraceEditor() {
     if (Number.isFinite(construction.magneticVariationDeg)) setMagneticVariationDeg(construction.magneticVariationDeg);
     if (construction.dmeNm?.length) setDmeRadiusNmInput(construction.dmeNm[0]);
   };
+  const saveCurrentDraftNow = ({ silent = false } = {}) => {
+    if (!draftPresetId) return null;
+    const saved = saveDraft(draftPresetId, draftSnapshot);
+    if (!saved) return null;
+    saveLastDraftPresetId(draftPresetId);
+    setDraftSavedAt(saved.savedAt);
+    setDraftStatus(`${silent ? "Autosaved" : "Saved draft"} ${formatDraftTime(saved.savedAt)}`);
+    setDraftWarning("");
+    return saved;
+  };
+  const applyPristinePreset = (preset) => {
+    if (!preset) return;
+    const anchorFrame = preset.anchorFrame || {};
+    const constructionDefaults = preset.constructionDefaults || {};
+    setManualPresetId(preset.id);
+    setTraceId(preset.procedureId);
+    setTraceType(preset.traceType || "APPROX_TURN");
+    if (Object.hasOwn(anchorFrame, "originId")) setOriginAnchorId(anchorFrame.originId || "CHE");
+    if (Object.hasOwn(anchorFrame, "axisToId")) setAxisTargetAnchorId(anchorFrame.axisToId || "");
+    if (Object.hasOwn(anchorFrame, "startId")) setStartAnchorId(anchorFrame.startId || "");
+    if (Object.hasOwn(anchorFrame, "finalId")) setFinalAnchorId(anchorFrame.finalId || "");
+    setConstructionStationId(constructionDefaults.stationId || "CHE");
+    setRadialDegInput(Number.isFinite(constructionDefaults.radialDeg) ? constructionDefaults.radialDeg : 11);
+    setBearingType(constructionDefaults.bearingType || "MAGNETIC");
+    setMagneticVariationDeg(constructionDefaults.magneticVariationDeg ?? DEFAULT_MAGNETIC_VARIATION_DEG);
+    setDmeRadiusNmInput(constructionDefaults.dmeNm?.[0] ?? 2);
+    setResolvedChartId(preset.chartId || preset.procedureId);
+    setResolvedChartTitle(preset.chartTitle || preset.procedureId.replace(/_/g, " "));
+    setResolvedChartFilename(preset.suggestedChartFilename || `${preset.chartId || preset.procedureId}.png`);
+    setResolvedCoordinateSpace(preset.coordinateSpace || "anchor-normalized");
+    setSelectedChartId(preset.chartOptionId || preset.chartId || preset.procedureId);
+    setRouteFixes(preset.routeFixes || []);
+    setTracePoints([]);
+    setSelectedPointId(null);
+    setConstructionItems([]);
+    setSelectedConstructionItemId(null);
+    setConstructionClickMode("none");
+    setAuxDraftPoint(null);
+    setNotes(preset.notes || DEFAULT_NOTES);
+    setAutoSetupWarnings([]);
+    setAutoSetupStatus("Preset loaded");
+    if (preset.id === "KURIS_SEVEN_RWY19") setConstructionPreset("KURIS_7_RWY19");
+    else if (preset.id === "KURIS_SEVEN_RWY01") setConstructionPreset("KURIS_7_RWY01");
+    else if (preset.id === "CHITOSE_FOUR_RWY01") setConstructionPreset("CHITOSE_4_RWY01");
+    else setConstructionPreset("NONE");
+  };
+  const restoreDraftToEditor = (draft) => {
+    if (!draft) return;
+    const chartSelection = draft.chartSelection || {};
+    const editorState = draft.editorState || {};
+    const anchorFrame = draft.anchorFrame || {};
+    const transform = draft.chartTransform || draft.overlay?.transform || draft.overlay || {};
+    const nextSelectedChartId = chartSelection.selectedChartId || draft.selectedChartId || draft.chartId;
+    const knownChart = CHART_OVERLAY_OPTIONS.some((chart) => chart.id === nextSelectedChartId);
+
+    if (draft.presetId) setManualPresetId(draft.presetId);
+    setTraceId(draft.procedureId || draft.traceId || draft.presetId || DEFAULT_TRACE_ID);
+    if (nextSelectedChartId && knownChart) setSelectedChartId(nextSelectedChartId);
+    setResolvedChartId(chartSelection.resolvedChartId || draft.chartId || "");
+    setResolvedChartTitle(chartSelection.resolvedChartTitle || draft.chartTitle || draft.procedureId || "");
+    setResolvedChartFilename(chartSelection.resolvedChartFilename || draft.overlay?.filename || `${draft.chartId || draft.procedureId || DEFAULT_TRACE_ID}.png`);
+    setResolvedCoordinateSpace(chartSelection.coordinateSpace || draft.coordinateSpace || "anchor-normalized");
+    setOverlayTransform({
+      x: Number.isFinite(transform.x) ? transform.x : DEFAULT_OVERLAY_TRANSFORM.x,
+      y: Number.isFinite(transform.y) ? transform.y : DEFAULT_OVERLAY_TRANSFORM.y,
+      scale: Number.isFinite(transform.scale) ? transform.scale : DEFAULT_OVERLAY_TRANSFORM.scale,
+      rotationDeg: Number.isFinite(transform.rotationDeg) ? transform.rotationDeg : DEFAULT_OVERLAY_TRANSFORM.rotationDeg,
+      opacity: Number.isFinite(transform.opacity) ? transform.opacity : DEFAULT_OVERLAY_TRANSFORM.opacity,
+    });
+    setOverlayVisible(draft.overlayVisible !== false);
+    setOriginAnchorId(anchorFrame.originId || "CHE");
+    setAxisTargetAnchorId(anchorFrame.axisToId || "");
+    setStartAnchorId(anchorFrame.startId || "");
+    setFinalAnchorId(anchorFrame.finalId || "");
+    setRouteFixes(Array.isArray(draft.routeFixes) ? draft.routeFixes : draft.routeBuilder?.routeFixes || []);
+    setTraceType(draft.traceType || draft.segmentType || "APPROX_TURN");
+    setTracePoints(Array.isArray(draft.points) ? draft.points : draft.rawProjectedPoints || []);
+    setConstructionItems(Array.isArray(draft.constructionItems) ? draft.constructionItems : []);
+    setNotes(editorState.notes || draft.notes || DEFAULT_NOTES);
+    setNudgeStep(editorState.nudgeStep || 5);
+    setConstructionPreset(editorState.constructionPreset || "NONE");
+    setShowPointLabels(editorState.showPointLabels !== false);
+    setMapLabelMode(editorState.mapLabelMode || "on");
+    setShowRadials(editorState.showRadials !== false);
+    setShowDme(editorState.showDme !== false);
+    setShowArcs(editorState.showArcs !== false);
+    setShowAux(editorState.showAux !== false);
+    setShowAnchors(editorState.showAnchors !== false);
+    setShowConstructionLabels(editorState.showConstructionLabels !== false);
+    setConstructionStationId(editorState.constructionStationId || "CHE");
+    setRadialDegInput(editorState.radialDegInput ?? 11);
+    setRadialLengthNmInput(editorState.radialLengthNmInput ?? 35);
+    setBearingType(editorState.bearingType || "MAGNETIC");
+    setMagneticVariationDeg(editorState.magneticVariationDeg ?? DEFAULT_MAGNETIC_VARIATION_DEG);
+    setDmeRadiusNmInput(editorState.dmeRadiusNmInput ?? 2);
+    setArcRadiusNmInput(editorState.arcRadiusNmInput ?? 6);
+    setArcStartBearingInput(editorState.arcStartBearingInput ?? 330);
+    setArcEndBearingInput(editorState.arcEndBearingInput ?? 30);
+    setSelectedConstructionItemId(editorState.selectedConstructionItemId || null);
+    setConstructionClickMode(editorState.constructionClickMode || "none");
+    setWaypointSnapQuery(editorState.waypointSnapQuery || "");
+    setSelectedWaypointSnapTargetId(editorState.selectedWaypointSnapTargetId || "KURIS");
+    setSelectedPointId(editorState.selectedPointId || null);
+    setAutoSetupWarnings([]);
+    setAutoSetupStatus("Draft restored from local storage");
+  };
   const handleAutoDeriveSetup = () => {
     const result = deriveProcedureTraceSetup({
       procedureId: traceId,
@@ -729,7 +966,7 @@ export default function RjccProcedureTraceEditor() {
     setAutoSetupWarnings(result.warnings || []);
     setAutoSetupStatus(result.warnings?.length ? "已自动解析，存在需要人工确认的项目" : "已自动解析");
   };
-  const applyManualPreviewPreset = () => {
+  const applyManualPreviewPresetLegacy = () => {
     const preset = selectedManualPreset;
     if (!preset) return;
     const anchorFrame = preset.anchorFrame || {};
@@ -758,6 +995,81 @@ export default function RjccProcedureTraceEditor() {
     else if (preset.id === "CHITOSE_FOUR_RWY01") setConstructionPreset("CHITOSE_4_RWY01");
     else setConstructionPreset("NONE");
   };
+  const applyManualPreviewPreset = () => {
+    const preset = selectedManualPreset;
+    if (!preset) return;
+    const { draft, error } = loadDraftWithMeta(preset.id);
+    skipNextDraftAutosaveRef.current = true;
+    saveLastDraftPresetId(preset.id);
+    if (draft) {
+      restoreDraftToEditor(draft);
+      setDraftSavedAt(draft.savedAt || null);
+      setDraftStatus(`Draft restored${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
+      setDraftWarning("");
+      return;
+    }
+    applyPristinePreset(preset);
+    setDraftSavedAt(null);
+    setDraftStatus(error ? "Draft ignored; preset loaded" : "No local draft; preset loaded");
+    setDraftWarning(error || "");
+  };
+  const handleManualPresetChange = (nextPresetId) => {
+    if (draftStorageReadyRef.current) saveCurrentDraftNow({ silent: true });
+    skipNextDraftAutosaveRef.current = true;
+    setManualPresetId(nextPresetId);
+    saveLastDraftPresetId(nextPresetId);
+    setDraftSavedAt(null);
+    setDraftWarning("");
+    setDraftStatus(hasDraft(nextPresetId) ? "Local draft available; apply preset to restore" : "No local draft");
+  };
+  const resetCurrentPresetToPreset = () => {
+    if (!selectedManualPreset) return;
+    clearDraft(selectedManualPreset.id);
+    skipNextDraftAutosaveRef.current = true;
+    applyPristinePreset(selectedManualPreset);
+    setDraftSavedAt(null);
+    setDraftWarning("");
+    setDraftStatus("Draft cleared; preset restored");
+  };
+  const exportCurrentDraft = () => {
+    saveCurrentDraftNow();
+    downloadManualPreviewJs();
+  };
+  useEffect(() => {
+    const lastPresetId = loadLastDraftPresetId();
+    const initialPresetId = lastPresetId && getManualPreviewPreset(lastPresetId) ? lastPresetId : manualPresetId;
+    const { draft, error } = loadDraftWithMeta(initialPresetId);
+    skipNextDraftAutosaveRef.current = true;
+    if (draft) {
+      restoreDraftToEditor(draft);
+      setDraftSavedAt(draft.savedAt || null);
+      setDraftStatus(`Draft restored${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
+      setDraftWarning("");
+    } else {
+      if (initialPresetId !== manualPresetId) setManualPresetId(initialPresetId);
+      setDraftSavedAt(null);
+      setDraftStatus(error ? "Draft ignored" : "No local draft");
+      setDraftWarning(error || "");
+    }
+    draftStorageReadyRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!draftStorageReadyRef.current || !draftPresetId) return undefined;
+    window.clearTimeout(draftAutosaveTimerRef.current);
+    if (skipNextDraftAutosaveRef.current) {
+      skipNextDraftAutosaveRef.current = false;
+      return undefined;
+    }
+    setDraftStatus("Unsaved local draft");
+    draftAutosaveTimerRef.current = window.setTimeout(() => {
+      const saved = saveDraft(draftPresetId, draftSnapshot);
+      if (!saved) return;
+      setDraftSavedAt(saved.savedAt);
+      setDraftStatus(`Autosaved ${formatDraftTime(saved.savedAt)}`);
+      setDraftWarning("");
+    }, 700);
+    return () => window.clearTimeout(draftAutosaveTimerRef.current);
+  }, [draftPresetId, draftSnapshot]);
   const applyPreset = (preset) => {
     setConstructionPreset(preset);
     const anchors = presetAnchors(preset);
@@ -1271,11 +1583,25 @@ export default function RjccProcedureTraceEditor() {
           <summary style={summaryStyle}>程序预设</summary>
           <div style={rowStyle}>
             <span>程序</span>
-            <select value={manualPresetId} onChange={(event) => setManualPresetId(event.target.value)} style={inputStyle}>
+            <select value={manualPresetId} onChange={(event) => handleManualPresetChange(event.target.value)} style={inputStyle}>
               {manualPreviewPresets.map((preset) => <option key={preset.id} value={preset.id} disabled={preset.enabled === false}>{preset.label}</option>)}
               <option value="CUSTOM">CUSTOM</option>
             </select>
             <button type="button" onClick={applyManualPreviewPreset} style={buttonStyle}>应用预设</button>
+          </div>
+          <div style={{ display: "grid", gap: 4, marginBottom: 5, padding: 6, border: "1px solid rgba(95,168,179,.22)", background: "rgba(3,18,22,.24)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, color: "#9ed7df", fontSize: 10 }}>
+              <strong style={{ color: "#d8fbff" }}>Draft</strong>
+              <span>{draftStatus}</span>
+              {draftSavedAt && <span>{formatDraftTime(draftSavedAt)}</span>}
+              {draftWarning && <span style={{ color: "#ffcf86" }}>{draftWarning}</span>}
+            </div>
+            <div style={rowStyle}>
+              <button type="button" onClick={() => saveCurrentDraftNow()} style={buttonStyle}>Save Draft</button>
+              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>Clear Draft</button>
+              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>Reset to Preset</button>
+              <button type="button" onClick={exportCurrentDraft} disabled={!validProcedureId(traceId)} style={buttonStyle}>Export Current Draft</button>
+            </div>
           </div>
           <div style={rowStyle}>
             <span>Procedure ID</span>

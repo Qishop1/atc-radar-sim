@@ -52,6 +52,8 @@ function buildDerivedProcedure(preset) {
   const preview = manualProcedurePreviews[id] || null;
   const overlay = chartOverlays[id] || chartOverlaysByChartId[preset.chartId] || null;
   const routeFixes = routeFixesFrom(preview, preset);
+  const startId = preview?.routeBuilder?.startId || preview?.anchorFrame?.startId || preset.anchorFrame?.startId || null;
+  const finalId = preview?.routeBuilder?.finalId || preview?.anchorFrame?.finalId || preset.anchorFrame?.finalId || null;
 
   if (!preview && !routeFixes.length) return null;
 
@@ -68,6 +70,11 @@ function buildDerivedProcedure(preset) {
     status: preview ? "traced" : preset.status || "pending_trace",
     displayOnly: true,
     guidanceEnabled: false,
+    startId,
+    startAnchorId: startId,
+    finalId,
+    anchorFrame: preview?.anchorFrame || preset.anchorFrame || null,
+    routeBuilder: preview?.routeBuilder || null,
     legs: null,
     routeFixes,
     chartId: preset.chartId,
