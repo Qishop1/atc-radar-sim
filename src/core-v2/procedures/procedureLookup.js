@@ -70,6 +70,46 @@ function keyedById(items, type) {
   return Object.fromEntries((items || []).filter((item) => item?.id).map((item) => [item.id, { id: item.id, type, source: item.source, item }]));
 }
 
+function getRunwayEnd(runwayData, airportId, endId) {
+  for (const runway of runwayData || []) {
+    if (airportId && runway.airportId !== airportId) continue;
+    const end = runway.ends?.find((candidate) => candidate.id === endId);
+    if (end && isFiniteLatLon(end)) return { runway, end };
+  }
+  return null;
+}
+
+function addRunwayAlias(lookup, aliasId, runway, end) {
+  if (!aliasId || !runway || !end || !isFiniteLatLon(end)) return;
+  addLookupItem(lookup, {
+    id: aliasId,
+    type: "RUNWAY_ANCHOR",
+    airportId: runway.airportId,
+    runwayId: runway.id,
+    endId: end.id,
+    lat: end.lat,
+    lon: end.lon,
+    source: runway.source,
+    item: end,
+  });
+}
+
+function addRepresentativeRunwayAnchor(lookup, airportId, aliasId, endIds) {
+  const ends = endIds.map((endId) => getRunwayEnd(runways, airportId, endId)).filter(Boolean);
+  if (!ends.length) return;
+  const lat = ends.reduce((sum, item) => sum + item.end.lat, 0) / ends.length;
+  const lon = ends.reduce((sum, item) => sum + item.end.lon, 0) / ends.length;
+  addLookupItem(lookup, {
+    id: aliasId,
+    type: "RUNWAY_ANCHOR",
+    airportId,
+    lat,
+    lon,
+    source: ends[0].runway.source,
+    item: { id: aliasId, lat, lon, runwayEndIds: endIds },
+  });
+}
+
 export function buildWaypointLookup() {
   const lookup = {};
 
@@ -90,8 +130,12 @@ export function buildWaypointLookup() {
       if (!end?.id || !isFiniteLatLon(end)) continue;
       const id = `${runway.airportId}:${end.id}`;
       addLookupItem(lookup, { id, type: "RUNWAY_END", airportId: runway.airportId, runwayId: runway.id, endId: end.id, lat: end.lat, lon: end.lon, source: runway.source, item: end });
+      addRunwayAlias(lookup, `${runway.airportId}_RWY${end.id}`, runway, end);
     }
   }
+
+  addRepresentativeRunwayAnchor(lookup, "RJCC", "RJCC_RWY01_REPRESENTATIVE", ["19L", "19R"]);
+  addRepresentativeRunwayAnchor(lookup, "RJCC", "RJCC_RWY19_REPRESENTATIVE", ["01L", "01R"]);
 
   lookup._localizers = keyedById(localizers, "LOCALIZER");
   for (const localizer of localizers) {

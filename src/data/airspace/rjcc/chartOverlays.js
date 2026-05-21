@@ -1,1 +1,1 @@
-export { chartOverlays, chartOverlaysByChartId } from "./chart-overlays/index.js";
+export { chartOverlayDiagnostics, chartOverlays, chartOverlaysByChartId, chartOverlaysById } from "./chart-overlays/index.js";

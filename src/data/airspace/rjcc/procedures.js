@@ -1,3 +1,5 @@
+import { buildDerivedDepartureProcedures } from "./derivedDepartureProcedures.js";
+
 export const arrivals = [
   {
     id: "PLACEHOLDER_ARRIVAL",
@@ -22,7 +24,7 @@ export const arrivals = [
   },
 ];
 
-export const departures = [
+const explicitDepartures = [
   {
     id: "YOSAN_ONE_DEPARTURE",
     name: "YOSAN ONE DEPARTURE",
@@ -748,6 +750,22 @@ export const departures = [
     ],
   },
 ];
+
+const {
+  procedures: derivedDepartureProcedures,
+  diagnostics: derivedDepartureDiagnostics,
+} = buildDerivedDepartureProcedures(explicitDepartures);
+
+if (derivedDepartureDiagnostics.duplicateDerivedIds.length) {
+  console.warn("[RJCC procedures] Duplicate derived procedure IDs skipped:", derivedDepartureDiagnostics.duplicateDerivedIds);
+}
+
+export const departures = [
+  ...explicitDepartures,
+  ...derivedDepartureProcedures,
+];
+
+export { derivedDepartureProcedures, derivedDepartureDiagnostics };
 
 export const approaches = [
   {

@@ -236,21 +236,27 @@ function serializeConstructionItem(item) {
   };
 }
 
-function buildExportPayload({ traceId, traceType, points, notes, overlay, anchorExport, constructionItems, coordinateSpace }) {
+function buildExportPayload({ traceId, traceType, points, notes, overlay, anchorExport, constructionItems, coordinateSpace, routeFixes, routeBuilder, presetId, chartId, status }) {
   const rawProjectedPoints = points.map(formatProjectedPoint);
   const useAnchorNormalized = coordinateSpace === "anchor-normalized" && anchorExport?.points?.length === points.length;
   const base = {
     id: traceId || DEFAULT_TRACE_ID,
+    procedureId: traceId || DEFAULT_TRACE_ID,
+    presetId: presetId || null,
     type: "MANUAL_TRACE",
     traceType,
+    status: status || "pending_verify",
     approximate: true,
     source: "manual chart trace",
     coordinateSpace: useAnchorNormalized ? "anchor-normalized" : "rjcc-projected",
     points: useAnchorNormalized ? anchorExport.points : rawProjectedPoints,
     ...(useAnchorNormalized && anchorExport?.anchorFrame ? { anchorFrame: anchorExport.anchorFrame } : {}),
     rawProjectedPoints,
+    routeFixes,
+    routeBuilder,
+    displayPath: rawProjectedPoints,
     constructionItems: (constructionItems || []).map(serializeConstructionItem),
-    overlay,
+    overlay: { ...overlay, chartId: chartId || overlay?.chartId },
     notes: notes || "Display-only traced preview; not authoritative navigation geometry.",
   };
   return base;
@@ -399,6 +405,7 @@ export default function RjccProcedureTraceEditor() {
   const [selectedConstructionItemId, setSelectedConstructionItemId] = useState(null);
   const [constructionClickMode, setConstructionClickMode] = useState("none");
   const [auxDraftPoint, setAuxDraftPoint] = useState(null);
+  const [routeFixes, setRouteFixes] = useState([]);
   const [waypointSnapQuery, setWaypointSnapQuery] = useState("");
   const [selectedWaypointSnapTargetId, setSelectedWaypointSnapTargetId] = useState("KURIS");
   const [snapMessage, setSnapMessage] = useState("");
@@ -529,6 +536,14 @@ export default function RjccProcedureTraceEditor() {
     },
     [filteredWaypointSnapTargets, selectedWaypointSnapTargetId, waypointSnapTargets, waypointSnapQuery]
   );
+  const routeFixTargets = useMemo(
+    () => routeFixes.map((id) => findWaypointSnapTargetById(id, waypointSnapTargets)).filter(Boolean),
+    [routeFixes, waypointSnapTargets]
+  );
+  const unresolvedRouteFixes = useMemo(
+    () => routeFixes.filter((id) => !findWaypointSnapTargetById(id, waypointSnapTargets)),
+    [routeFixes, waypointSnapTargets]
+  );
   const selectedStation = stationById(rjccNavaids, constructionStationId) || stationOptions[0];
   const anchorConfig = useMemo(() => ({
     originId: originAnchorId,
@@ -570,9 +585,30 @@ export default function RjccProcedureTraceEditor() {
     rotationDeg: Number(overlayTransform.rotationDeg.toFixed(2)),
     opacity: Number(overlayTransform.opacity.toFixed(3)),
   }), [exportChartFilename, overlayTransform, resolvedChartId, selectedChart.id, selectedManualPreset]);
+  const routeBuilderExport = useMemo(() => ({
+    startId: startAnchorId || null,
+    finalId: finalAnchorId || null,
+    routeFixes,
+    generatedTraceType: traceType === "SOLID_ROUTE" ? "route-solid" : null,
+    unresolvedRouteFixes,
+  }), [finalAnchorId, routeFixes, startAnchorId, traceType, unresolvedRouteFixes]);
   const exportPayload = useMemo(
-    () => buildExportPayload({ traceId, traceType, points: tracePoints, notes, overlay: overlayExport, anchorExport, constructionItems, coordinateSpace: resolvedCoordinateSpace }),
-    [anchorExport, constructionItems, notes, overlayExport, resolvedCoordinateSpace, traceId, tracePoints, traceType]
+    () => buildExportPayload({
+      traceId,
+      traceType,
+      points: tracePoints,
+      notes,
+      overlay: overlayExport,
+      anchorExport,
+      constructionItems,
+      coordinateSpace: resolvedCoordinateSpace,
+      routeFixes,
+      routeBuilder: routeBuilderExport,
+      presetId: selectedManualPreset?.id || null,
+      chartId: resolvedChartId || selectedManualPreset?.chartId || selectedChart.id,
+      status: tracePoints.length || routeFixes.length ? "pending_verify" : selectedManualPreset?.status || "pending_trace",
+    }),
+    [anchorExport, constructionItems, notes, overlayExport, resolvedChartId, resolvedCoordinateSpace, routeBuilderExport, routeFixes, selectedChart.id, selectedManualPreset, traceId, tracePoints, traceType]
   );
   const jsonExport = useMemo(() => JSON.stringify(exportPayload, null, 2), [exportPayload]);
   const jsExport = useMemo(() => `export const manualProcedurePreviewGeometry = {\n  ${JSON.stringify(exportPayload.id)}: ${jsonExport}\n};\n`, [exportPayload.id, jsonExport]);
@@ -611,6 +647,7 @@ export default function RjccProcedureTraceEditor() {
       opacity: overlayExport.opacity,
     },
     notes: "Chart overlay is a visual reference only. AIP SID sketch is not georeferenced.",
+    chartAlignmentNotes: `${exportChartId} chart is schematic; align for readability only. Route geometry comes from fix sequence or manual display trace.`,
   }), [exportChartId, exportProcedureId, overlayExport, resolvedChartTitle, selectedManualPreset]);
   const chartOverlayFileContent = useMemo(
     () => buildChartOverlayFile({ chartId: exportChartId, chartOverlay: chartOverlayPayload }),
@@ -621,6 +658,28 @@ export default function RjccProcedureTraceEditor() {
   const chartOverlayConstName = `${exportChartId}_CHART_OVERLAY`;
   const chartIndexImportSnippet = `import { ${chartOverlayConstName} } from "./${exportChartId}.chartOverlay.js";`;
   const chartIndexEntrySnippet = `[${chartOverlayConstName}.chartId]: ${chartOverlayConstName},`;
+  const manualPreviewTargetPath = `src/data/airspace/rjcc/manual-previews/${exportProcedureId}.js`;
+  const chartOverlayTargetPath = `src/data/airspace/rjcc/chart-overlays/${exportChartId}.chartOverlay.js`;
+  const procedurePatchJson = useMemo(() => JSON.stringify({
+    id: exportProcedureId,
+    presetId: selectedManualPreset?.id || null,
+    chartId: exportChartId,
+    status: routeFixes.length ? "pending_verify" : "pending_trace",
+    startId: startAnchorId || null,
+    finalId: finalAnchorId || null,
+    routeFixes,
+    navSpec: routeFixes.length ? "RNAV1" : selectedManualPreset?.navSpec || null,
+    displayOnly: true,
+    guidanceEnabled: false,
+  }, null, 2), [exportChartId, exportProcedureId, finalAnchorId, routeFixes, selectedManualPreset, startAnchorId]);
+  const exportDiagnostics = useMemo(() => [
+    ...((selectedManualPreset?.procedureId && selectedManualPreset.procedureId !== exportProcedureId) ? [`Preset id ${selectedManualPreset.procedureId} differs from export id ${exportProcedureId}.`] : []),
+    ...(!exportChartId ? ["Chart id is missing."] : []),
+    ...(!startAnchorId ? ["Start anchor is missing."] : []),
+    ...(!finalAnchorId ? ["Final/endpoint anchor is missing."] : []),
+    ...(!tracePoints.length && !routeFixes.length ? ["Route has zero trace points and zero routeFixes."] : []),
+    ...unresolvedRouteFixes.map((id) => `Route fix ${id} is unresolved.`),
+  ], [exportChartId, exportProcedureId, finalAnchorId, routeFixes.length, selectedManualPreset, startAnchorId, tracePoints.length, unresolvedRouteFixes]);
 
   const updateOverlay = (patch) => setOverlayTransform((prev) => ({ ...prev, ...patch }));
   const nudgeOverlay = (dx, dy) => setOverlayTransform((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
@@ -691,6 +750,7 @@ export default function RjccProcedureTraceEditor() {
     setResolvedChartFilename(preset.suggestedChartFilename || `${preset.chartId || preset.procedureId}.png`);
     setResolvedCoordinateSpace(preset.coordinateSpace || "anchor-normalized");
     setSelectedChartId(preset.chartOptionId || preset.chartId || preset.procedureId);
+    setRouteFixes(preset.routeFixes || []);
     setAutoSetupWarnings([]);
     setAutoSetupStatus("已应用预设");
     if (preset.id === "KURIS_SEVEN_RWY19") setConstructionPreset("KURIS_7_RWY19");
@@ -986,6 +1046,44 @@ export default function RjccProcedureTraceEditor() {
     setFinalAnchorAndMaybeAxis(selectedWaypointSnapTarget.id, { forceAxis: true });
     setSnapMessage(`终点和轴线已设为 ${selectedWaypointSnapTarget.id}`);
   };
+  const addSelectedSnapTargetToRoute = () => {
+    if (!selectedWaypointSnapTarget) {
+      setSnapMessage("请先选择航点/台站/跑道锚点");
+      return;
+    }
+    setRouteFixes((prev) => [...prev, selectedWaypointSnapTarget.id]);
+    setSnapMessage(`Route Builder 已加入 ${selectedWaypointSnapTarget.id}`);
+  };
+  const removeRouteFixAt = (indexToRemove) => {
+    setRouteFixes((prev) => prev.filter((_, index) => index !== indexToRemove));
+  };
+  const moveRouteFix = (indexToMove, direction) => {
+    setRouteFixes((prev) => {
+      const nextIndex = indexToMove + direction;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      [next[indexToMove], next[nextIndex]] = [next[nextIndex], next[indexToMove]];
+      return next;
+    });
+  };
+  const generateRouteDisplayPath = () => {
+    const routePoints = [
+      ...(anchorConfig.start ? [{ ...anchorConfig.start, id: startAnchorId }] : []),
+      ...routeFixTargets.map((target) => ({ ...target, id: target.id })),
+      ...(anchorConfig.final && finalAnchorId !== routeFixTargets.at(-1)?.id ? [{ ...anchorConfig.final, id: finalAnchorId }] : []),
+    ].filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+
+    const deduped = routePoints.filter((point, index, points) => index === 0 || point.id !== points[index - 1].id);
+    setTraceType("SOLID_ROUTE");
+    setTracePoints(deduped.map((point, index) => ({
+      id: point.id || `R${index + 1}`,
+      x: Number(point.x.toFixed(2)),
+      y: Number(point.y.toFixed(2)),
+      lat: formatNumber(point.lat),
+      lon: formatNumber(point.lon),
+    })));
+    setSnapMessage(deduped.length >= 2 ? `Route Builder generated ${deduped.length} display points.` : "Route Builder needs at least two resolved points.");
+  };
   const snapPointToWaypointTarget = (mode) => {
     if (!selectedWaypointSnapTarget) {
       setSnapMessage("请先选择航点/台站/跑道锚点");
@@ -1254,6 +1352,10 @@ export default function RjccProcedureTraceEditor() {
           <span>透明度</span>
           <input type="range" min="0" max="1" step="0.02" value={overlayTransform.opacity} onChange={(event) => updateOverlay({ opacity: Number(event.target.value) })} />
           <span>{Math.round(overlayTransform.opacity * 100)}%</span>
+          <button type="button" onClick={() => setOverlayVisible(false)} style={buttonStyle}>OFF</button>
+          {[0.2, 0.4, 0.6].map((opacity) => (
+            <button key={opacity} type="button" onClick={() => { setOverlayVisible(true); updateOverlay({ opacity }); }} style={buttonStyle}>{Math.round(opacity * 100)}%</button>
+          ))}
         </div>
         <div style={rowStyle}>
           <span>步长</span>
@@ -1451,6 +1553,33 @@ export default function RjccProcedureTraceEditor() {
           </div>
           {snapMessage && <div style={{ color: "#d8fbff", fontSize: 10 }}>{snapMessage}</div>}
         </details>
+        <details open style={sectionStyle}>
+          <summary style={summaryStyle}>Route Builder</summary>
+          <div style={{ color: "#7fc6cf", fontSize: 10, lineHeight: 1.35, marginBottom: 5 }}>
+            RNAV display routes are built from waypoint coordinates; chart images are reference only.
+          </div>
+          <div style={rowStyle}>
+            <button type="button" onClick={addSelectedSnapTargetToRoute} style={buttonStyle}>Add selected</button>
+            <button type="button" onClick={generateRouteDisplayPath} style={buttonStyle}>Generate display route</button>
+            <button type="button" onClick={() => setRouteFixes([])} style={buttonStyle}>Clear route</button>
+            <span style={{ color: "#5fa8b3", fontSize: 10 }}>{routeFixes.length} routeFixes</span>
+          </div>
+          <div style={{ display: "grid", gap: 4, maxHeight: 150, overflowY: "auto" }}>
+            {routeFixes.length === 0 && <div style={{ color: "#5fa8b3", fontSize: 11 }}>No routeFixes yet. Search a waypoint, then add selected.</div>}
+            {routeFixes.map((fixId, index) => {
+              const target = findWaypointSnapTargetById(fixId, waypointSnapTargets);
+              return (
+                <div key={`${fixId}-${index}`} style={{ display: "grid", gridTemplateColumns: "26px 1fr auto auto auto", gap: 4, alignItems: "center", border: "1px solid rgba(95,168,179,.18)", padding: "3px 4px" }}>
+                  <span>{index + 1}</span>
+                  <span style={{ color: target ? "#d8fbff" : "#ffcf86" }}>{fixId}{target?.type ? ` / ${target.type}` : " / unresolved"}</span>
+                  <button type="button" onClick={() => moveRouteFix(index, -1)} style={buttonStyle}>Up</button>
+                  <button type="button" onClick={() => moveRouteFix(index, 1)} style={buttonStyle}>Down</button>
+                  <button type="button" onClick={() => removeRouteFixAt(index)} style={buttonStyle}>Remove</button>
+                </div>
+              );
+            })}
+          </div>
+        </details>
       </div>
 
       <div style={{ ...panelStyle, right: 14, top: 14, width: 430, bottom: 14, display: "grid", gridTemplateRows: "auto auto auto 1fr 1fr", gap: 8 }}>
@@ -1473,24 +1602,29 @@ export default function RjccProcedureTraceEditor() {
             <button type="button" onClick={downloadChartOverlayJs} disabled={!validProcedureId(traceId)} style={buttonStyle}>下载航图叠加JS</button>
           </div>
           <div style={{ color: "#7fc6cf", fontSize: 10, lineHeight: 1.35 }}>
-            下载后，把航路JS放入 src/data/airspace/rjcc/manual-previews/；把航图叠加JS放入 src/data/airspace/rjcc/chart-overlays/；把PNG放入 public/charts/rjcc/；然后把 import 和条目加入对应 index.js。
+            下载后，把航路JS放入 src/data/airspace/rjcc/manual-previews/；把航图叠加JS放入 src/data/airspace/rjcc/chart-overlays/。刷新后会自动注册，不需要手动编辑 index.js。
           </div>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
-            复制航路 index import
-            <input readOnly value={manualIndexImportSnippet} style={inputStyle} />
+            航路JS建议保存路径
+            <input readOnly value={manualPreviewTargetPath} style={inputStyle} />
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
-            复制航路 index 条目
-            <input readOnly value={manualIndexEntrySnippet} style={inputStyle} />
+            航图叠加JS建议保存路径
+            <input readOnly value={chartOverlayTargetPath} style={inputStyle} />
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
-            复制航图 index import
-            <input readOnly value={chartIndexImportSnippet} style={inputStyle} />
+            稳定ID
+            <input readOnly value={`preset ${selectedManualPreset?.id || "CUSTOM"} / procedure ${exportProcedureId} / chart ${exportChartId}`} style={inputStyle} />
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
-            复制航图 index 条目
-            <input readOnly value={chartIndexEntrySnippet} style={inputStyle} />
+            可选 procedures patch JSON
+            <input readOnly value={procedurePatchJson.replace(/\s+/g, " ")} style={inputStyle} />
           </label>
+          {exportDiagnostics.length > 0 && (
+            <div style={{ display: "grid", gap: 2, color: "#ffcf86", fontSize: 10 }}>
+              {exportDiagnostics.map((warning) => <span key={warning}>{warning}</span>)}
+            </div>
+          )}
         </div>
         <label style={{ display: "grid", gap: 4, minHeight: 0 }}>
           <div>JS 导出</div>

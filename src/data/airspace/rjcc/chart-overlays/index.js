@@ -1,22 +1,79 @@
-import { CHITOSE_FOUR_CHART_OVERLAY } from "./CHITOSE_FOUR.chartOverlay.js";
-import { KURIS_SEVEN_CHART_OVERLAY } from "./KURIS_SEVEN.chartOverlay.js";
-import { DALBI_ONE_CHART_OVERLAY } from "./DALBI_ONE.chartOverlay.js";
+const chartOverlayModules = import.meta.glob("./*.js", { eager: true });
 
-const sharedChartOverlays = [
-  CHITOSE_FOUR_CHART_OVERLAY,
-  KURIS_SEVEN_CHART_OVERLAY,
-  DALBI_ONE_CHART_OVERLAY,
-];
-
-function procedureEntriesForOverlay(overlay) {
-  const procedureIds = overlay.procedureIds || (overlay.procedureId ? [overlay.procedureId] : []);
-  return procedureIds.map((procedureId) => [procedureId, overlay]);
+function isObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
 }
 
-export const chartOverlays = {
-  ...Object.fromEntries(sharedChartOverlays.flatMap(procedureEntriesForOverlay)),
-};
+function looksLikeChartOverlay(value) {
+  return isObject(value)
+    && Boolean(value.imageUrl)
+    && Boolean(value.id || value.chartId || value.procedureId || value.procedureIds?.length);
+}
 
-export const chartOverlaysByChartId = {
-  ...Object.fromEntries(sharedChartOverlays.map((overlay) => [overlay.chartId, overlay])),
-};
+function overlayCandidatesFromExport(value) {
+  if (looksLikeChartOverlay(value)) return [value];
+  if (!isObject(value)) return [];
+  return Object.values(value).filter(looksLikeChartOverlay);
+}
+
+function registryKeysForOverlay(overlay) {
+  return [...new Set([
+    overlay.id,
+    overlay.chartId,
+    overlay.procedureId,
+    ...(overlay.procedureIds || []),
+  ].filter(Boolean))];
+}
+
+function registerOverlay(registry, diagnostics, overlay, sourcePath) {
+  for (const id of registryKeysForOverlay(overlay)) {
+    if (registry[id]) {
+      diagnostics.duplicates.push({ id, keptSourcePath: registry[id].sourcePath, skippedSourcePath: sourcePath });
+      continue;
+    }
+    registry[id] = { ...overlay, sourcePath };
+  }
+}
+
+function buildChartOverlayRegistry() {
+  const registry = {};
+  const diagnostics = {
+    duplicates: [],
+    modulesWithoutOverlay: [],
+  };
+
+  for (const [path, module] of Object.entries(chartOverlayModules)) {
+    if (path.endsWith("/index.js")) continue;
+    const overlays = Object.values(module).flatMap(overlayCandidatesFromExport);
+    if (!overlays.length) {
+      diagnostics.modulesWithoutOverlay.push(path);
+      continue;
+    }
+    overlays.forEach((overlay) => registerOverlay(registry, diagnostics, overlay, path));
+  }
+
+  return { registry, diagnostics };
+}
+
+const { registry, diagnostics } = buildChartOverlayRegistry();
+
+if (diagnostics.modulesWithoutOverlay.length) {
+  console.warn("[RJCC chart overlays] No recognizable overlay export:", diagnostics.modulesWithoutOverlay);
+}
+
+if (diagnostics.duplicates.length) {
+  console.warn("[RJCC chart overlays] Duplicate overlay IDs skipped:", diagnostics.duplicates);
+}
+
+export const chartOverlays = registry;
+export const chartOverlaysByChartId = Object.fromEntries(
+  Object.values(registry)
+    .filter((overlay, index, overlays) => overlay.chartId && overlays.findIndex((item) => item.chartId === overlay.chartId) === index)
+    .map((overlay) => [overlay.chartId, overlay]),
+);
+export const chartOverlaysById = Object.fromEntries(
+  Object.values(registry)
+    .filter((overlay, index, overlays) => overlay.id && overlays.findIndex((item) => item.id === overlay.id) === index)
+    .map((overlay) => [overlay.id, overlay]),
+);
+export const chartOverlayDiagnostics = diagnostics;

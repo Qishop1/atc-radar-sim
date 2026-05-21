@@ -1,1 +1,1 @@
-export { manualProcedurePreviews } from "./manual-previews/index.js";
+export { manualPreviewDiagnostics, manualProcedurePreviews } from "./manual-previews/index.js";

@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 import { buildAircraftLikeTurnPreview, buildTurnToRadialPreview } from "../../core-v2/procedures/approximateTurnGeometry.js";
-import { buildProcedureRoutePreview, expandProcedureRouteEntries } from "../../core-v2/procedures/procedureRouteBuilder.js";
+import { buildProcedureRoutePreview, expandProcedureRouteEntries, normalizeProcedureTraceType } from "../../core-v2/procedures/procedureRouteBuilder.js";
 
 function projectPoint(point, projection) {
   if (!Number.isFinite(point?.lat) || !Number.isFinite(point?.lon)) return null;
@@ -107,7 +107,7 @@ function chaikinSmoothPoints(points, iterations = 3) {
 }
 
 function pathFromManualTracePoints(segment, points) {
-  if (segment?.traceType !== "APPROX_TURN") return pathFromPoints(points);
+  if (normalizeProcedureTraceType(segment?.traceType, { segment, fallback: "manual-trace" }) !== "approx-turn") return pathFromPoints(points);
 
   const tailStartIndex = Number.isInteger(segment.radialTailStartIndex)
     ? segment.radialTailStartIndex
@@ -293,6 +293,23 @@ function approximateSegmentPath(segment, projection, waypointLookup) {
   };
 }
 
+function routeStyle(traceType) {
+  const normalized = normalizeProcedureTraceType(traceType, { fallback: "connector" });
+  if (normalized === "route-solid") {
+    return { stroke: "#f1fbff", opacity: 0.9, strokeWidth: 1.25, strokeDasharray: undefined };
+  }
+  if (normalized === "approx-turn") {
+    return { stroke: "#d6f6fa", opacity: 0.58, strokeWidth: 0.95, strokeDasharray: "6 4" };
+  }
+  if (normalized === "radial-segment") {
+    return { stroke: "#b9eef3", opacity: 0.5, strokeWidth: 0.85, strokeDasharray: "10 4 2 4" };
+  }
+  if (normalized === "manual-trace") {
+    return { stroke: "#d6f6fa", opacity: 0.5, strokeWidth: 0.9, strokeDasharray: "5 4" };
+  }
+  return { stroke: "#9ed7df", opacity: 0.35, strokeWidth: 0.8, strokeDasharray: "3 5" };
+}
+
 export const ProcedureRouteLayer = memo(function ProcedureRouteLayer({
   procedures = [],
   selectedProcedureIds = [],
@@ -354,17 +371,21 @@ export const ProcedureRouteLayer = memo(function ProcedureRouteLayer({
       {projectedRoutes.map((preview) => {
         const labelPoint = midpoint(preview.projectedPoints);
         const title = [preview.label, ...preview.warnings].filter(Boolean).join("\n");
+        const mainStyle = routeStyle(preview.traceType);
 
         return (
           <g key={preview.procedureId || preview.label}>
             <title>{title}</title>
-            {preview.approximatePaths.map(({ segment, path }, index) => (
-              <g key={`${preview.procedureId}-approx-${index}`} opacity="0.55" stroke="#d6f6fa" strokeWidth="0.9" strokeDasharray="5 4" vectorEffect="non-scaling-stroke">
-                <title>{[segment.notes || approximateTitle, ...(path.warnings || [])].filter(Boolean).join("\n")}</title>
-                <path d={path.d} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
-              </g>
-            ))}
-            {preview.pathD && <path d={preview.pathD} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />}
+            {preview.approximatePaths.map(({ segment, path }, index) => {
+              const segmentStyle = routeStyle(segment.traceType || segment.type);
+              return (
+                <g key={`${preview.procedureId}-approx-${index}`} opacity={segmentStyle.opacity} stroke={segmentStyle.stroke} strokeWidth={segmentStyle.strokeWidth} strokeDasharray={segmentStyle.strokeDasharray} vectorEffect="non-scaling-stroke">
+                  <title>{[segment.notes || approximateTitle, ...(path.warnings || [])].filter(Boolean).join("\n")}</title>
+                  <path d={path.d} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              );
+            })}
+            {preview.pathD && <path d={preview.pathD} stroke={mainStyle.stroke} strokeWidth={mainStyle.strokeWidth} strokeDasharray={mainStyle.strokeDasharray} opacity={mainStyle.opacity} vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />}
             {showText && labelPoint && <text x={labelPoint.x + 7 * s} y={labelPoint.y + 11 * s} style={procedureLabelStyle} stroke="none">{preview.procedureId}</text>}
           </g>
         );

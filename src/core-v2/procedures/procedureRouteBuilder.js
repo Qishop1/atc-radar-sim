@@ -4,7 +4,14 @@ function collectLegs(procedure) {
   const segmentLegs = (procedure?.segments || []).flatMap((segment) => segment.legs || []);
   const directLegs = procedure?.legs || [];
   const holdLeg = procedure?.fixId ? [{ type: procedure.type || "HOLD", fixId: procedure.fixId }] : [];
-  return [...segmentLegs, ...directLegs, ...holdLeg];
+  const legs = [...segmentLegs, ...directLegs, ...holdLeg];
+  if (legs.length) return legs;
+  return (procedure?.routeFixes || [])
+    .map((ref, index) => ({
+      type: index === 0 ? "HEADING_TO_FIX" : "FIX",
+      fixId: typeof ref === "string" ? ref : ref?.fixId || ref?.id || ref?.navaidId || ref?.airportId,
+    }))
+    .filter((leg) => leg.fixId);
 }
 
 export function expandProcedureVariants(procedure) {
@@ -52,6 +59,21 @@ function speedConstraintText(speed) {
 
 function endpointFixIdForLeg(leg) {
   return leg?.fixId || leg?.endpointFixId || leg?.toFixId || null;
+}
+
+export function normalizeProcedureTraceType(traceType, { procedure, segment, fallback } = {}) {
+  const raw = String(traceType || segment?.traceType || segment?.type || fallback || "").trim().toUpperCase().replace(/_/g, "-");
+  if (raw === "ROUTE-SOLID" || raw === "SOLID-ROUTE" || raw === "RNAV-ROUTE") return "route-solid";
+  if (raw === "APPROX-TURN" || raw.includes("APPROX") || raw.includes("TURN")) return "approx-turn";
+  if (raw === "RADIAL" || raw === "RADIAL-SEGMENT" || raw.includes("RADIAL")) return "radial-segment";
+  if (raw === "CONNECTOR" || raw.includes("HELPER")) return "connector";
+  if (raw === "MANUAL-TRACE") return "manual-trace";
+
+  const navSpec = String(procedure?.navSpec || "").toUpperCase();
+  if (navSpec.includes("RNAV")) return "route-solid";
+  if (procedure?.navSpec === "CONVENTIONAL") return "approx-turn";
+  if (segment?.stationId && Number.isFinite(segment?.radialDeg)) return "radial-segment";
+  return fallback || "connector";
 }
 
 function roleForLeg(leg) {
@@ -111,6 +133,7 @@ function buildApproximateProcedureGeometry({ procedure, waypointLookup = {} } = 
         : "APPROX_AIRCRAFT_TURN";
     approximateSegments.push({
       type: segmentType,
+      traceType: needsRadialStation ? "radial-segment" : "approx-turn",
       approximate: true,
       turnDirection: previewGeometry.turnDirection || null,
       headingDeg: previewGeometry.initialHeadingDeg ?? runwayEnd.item?.trueBearingDeg ?? null,
@@ -183,13 +206,15 @@ function buildManualPreviewRoute({ procedure, manualPreview, waypointLookup }) {
   return {
     procedureId: procedure?.id || manualPreview.id,
     type: procedure?.type || null,
+    navSpec: procedure?.navSpec || null,
+    traceType: normalizeProcedureTraceType(manualPreview.traceType, { procedure, segment: manualPreview, fallback: "manual-trace" }),
     label: procedure?.name || procedure?.id || manualPreview.id || "Procedure",
     points,
     approximateSegments: [
       {
         type: "MANUAL_TRACE",
         approximate: true,
-        traceType: manualPreview.traceType || null,
+        traceType: normalizeProcedureTraceType(manualPreview.traceType, { procedure, segment: manualPreview, fallback: "manual-trace" }),
         coordinateSpace: manualPreview.coordinateSpace,
         normalizedPoints: manualPreview.points || [],
         rawProjectedPoints: manualPreview.rawProjectedPoints || [],
@@ -289,6 +314,8 @@ export function buildProcedureRoutePreview({ procedure, waypointLookup = {} } = 
   return {
     procedureId,
     type: procedure?.type || null,
+    navSpec: procedure?.navSpec || null,
+    traceType: normalizeProcedureTraceType(null, { procedure, fallback: rnavProcedure ? "route-solid" : "connector" }),
     label: procedure?.name || procedureId || "Procedure",
     points,
     approximateSegments: approximateGeometry.approximateSegments,

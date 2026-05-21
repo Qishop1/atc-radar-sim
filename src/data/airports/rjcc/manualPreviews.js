@@ -1,2 +1,1 @@
-export { manualProcedurePreviews } from "../../airspace/rjcc/manualProcedurePreviews.js";
-
+export { manualPreviewDiagnostics, manualProcedurePreviews } from "../../airspace/rjcc/manualProcedurePreviews.js";
