@@ -9,6 +9,6 @@ export const procedureAuthoring = {
     manualPreviews: "src/data/airspace/rjcc/manual-previews",
     chartOverlays: "src/data/airspace/rjcc/chart-overlays",
     chartImages: "public/charts/rjcc",
+    departureChartManifest: "src/data/airports/rjcc/departureChartManifest.js",
   },
 };
-

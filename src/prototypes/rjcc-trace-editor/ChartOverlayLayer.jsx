@@ -1,20 +1,8 @@
 import { memo, useEffect, useState } from "react";
+import { rjccDepartureChartOptions } from "../../data/airports/rjcc/departureChartManifest.js";
 
 export const CHART_OVERLAY_OPTIONS = [
-  {
-    id: "kuris-seven",
-    label: "KURIS SEVEN",
-    href: "/charts/rjcc/kuris-seven.png",
-    width: 520,
-    height: 720,
-  },
-  {
-    id: "chitose-four",
-    label: "CHITOSE FOUR",
-    href: "/charts/rjcc/chitose-four.png",
-    width: 520,
-    height: 720,
-  },
+  ...rjccDepartureChartOptions,
   {
     id: "custom",
     label: "CUSTOM",

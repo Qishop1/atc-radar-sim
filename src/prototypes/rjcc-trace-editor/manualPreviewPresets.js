@@ -1,72 +1,6 @@
-export const manualPreviewPresets = [
-  {
-    id: "KURIS_SEVEN_RWY19",
-    label: "KURIS SEVEN RWY19",
-    procedureId: "KURIS_SEVEN_RWY19",
-    chartId: "KURIS_SEVEN",
-    chartTitle: "KURIS SEVEN DEPARTURE",
-    suggestedChartFilename: "KURIS_SEVEN.png",
-    traceType: "APPROX_TURN",
-    coordinateSpace: "anchor-normalized",
-    anchorFrame: {
-      originId: "CHE",
-      axisToId: "KURIS",
-      startId: "RJCC_RWY19_REPRESENTATIVE",
-      finalId: "KURIS",
-    },
-    constructionDefaults: {
-      stationId: "CHE",
-      radialDeg: 11,
-      bearingType: "MAGNETIC",
-      magneticVariationDeg: -9,
-      dmeNm: [2, 6],
-    },
-  },
-  {
-    id: "KURIS_SEVEN_RWY01",
-    label: "KURIS SEVEN RWY01",
-    procedureId: "KURIS_SEVEN_RWY01",
-    chartId: "KURIS_SEVEN",
-    chartTitle: "KURIS SEVEN DEPARTURE",
-    suggestedChartFilename: "KURIS_SEVEN.png",
-    traceType: "APPROX_TURN",
-    coordinateSpace: "anchor-normalized",
-    anchorFrame: {
-      originId: "CHE",
-      axisToId: "KURIS",
-      startId: "RJCC_RWY01_REPRESENTATIVE",
-      finalId: "KURIS",
-    },
-    constructionDefaults: {
-      stationId: "CHE",
-      radialDeg: 11,
-      bearingType: "MAGNETIC",
-      magneticVariationDeg: -9,
-      dmeNm: [],
-    },
-  },
-  {
-    id: "CHITOSE_FOUR_RWY01",
-    label: "CHITOSE FOUR RWY01",
-    procedureId: "CHITOSE_FOUR_RWY01",
-    chartId: "CHITOSE_FOUR",
-    chartTitle: "CHITOSE FOUR DEPARTURE",
-    suggestedChartFilename: "CHITOSE_FOUR.png",
-    traceType: "APPROX_TURN",
-    coordinateSpace: "anchor-normalized",
-    anchorFrame: {
-      originId: "CHE",
-      axisToId: "CHE",
-      startId: "RJCC_RWY01_REPRESENTATIVE",
-      finalId: "CHE",
-    },
-    constructionDefaults: {
-      stationId: "CHE",
-      bearingType: "MAGNETIC",
-      magneticVariationDeg: -9,
-      dmeNm: [6.3, 10],
-    },
-  },
+import { rjccDepartureAuthoringPresets } from "../../data/airports/rjcc/departureChartManifest.js";
+
+const legacyDisabledManualPreviewPresets = [
   {
     id: "CHITOSE_ONE_RWY01_TODO",
     label: "CHITOSE ONE RWY01 (TODO)",
@@ -77,7 +11,8 @@ export const manualPreviewPresets = [
     traceType: "APPROX_TURN",
     coordinateSpace: "anchor-normalized",
     enabled: false,
-    notes: "TODO scaffold only: exact procedure selector id/final fix has not been added to procedures.js yet.",
+    status: "todo",
+    notes: "Legacy disabled scaffold only: no current chart asset is present in public/charts/rjcc.",
     anchorFrame: {
       originId: "CHE",
       axisToId: "CHE",
@@ -101,7 +36,8 @@ export const manualPreviewPresets = [
     traceType: "APPROX_TURN",
     coordinateSpace: "anchor-normalized",
     enabled: false,
-    notes: "TODO scaffold only: exact procedure selector id/final fix has not been added to procedures.js yet.",
+    status: "todo",
+    notes: "Legacy disabled scaffold only: no current chart asset is present in public/charts/rjcc.",
     anchorFrame: {
       originId: "CHE",
       axisToId: "CHE",
@@ -115,6 +51,11 @@ export const manualPreviewPresets = [
       dmeNm: [],
     },
   },
+];
+
+export const manualPreviewPresets = [
+  ...rjccDepartureAuthoringPresets,
+  ...legacyDisabledManualPreviewPresets,
 ];
 
 export function getManualPreviewPreset(id) {

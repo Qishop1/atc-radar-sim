@@ -1,0 +1,245 @@
+const AUTHORING_CHART_SIZE = { width: 520, height: 720 };
+const SOURCE = "public/charts/rjcc";
+
+const GENERIC_TODO_ANCHOR_FRAME = {
+  originId: "CHE",
+  axisToId: "KURIS",
+  startId: "RJCC_RWY19_REPRESENTATIVE",
+  finalId: "KURIS",
+};
+
+const GENERIC_TODO_CONSTRUCTION_DEFAULTS = {
+  stationId: "CHE",
+  bearingType: "MAGNETIC",
+  magneticVariationDeg: -9,
+  dmeNm: [],
+};
+
+function chartTitleFromId(chartId) {
+  return chartId.replace(/_/g, " ");
+}
+
+function chartRecord(chartId, overrides = {}) {
+  const title = overrides.title || chartTitleFromId(chartId);
+  const filename = overrides.filename || `${chartId}.png`;
+  return {
+    chartId,
+    title,
+    filename,
+    imageUrl: `/charts/rjcc/${filename}`,
+    source: SOURCE,
+    airac_cycle: null,
+    status: overrides.status || "pending_trace",
+    procedureType: overrides.procedureType || "SID_TODO",
+    width: AUTHORING_CHART_SIZE.width,
+    height: AUTHORING_CHART_SIZE.height,
+    variants: overrides.variants || [
+      pendingTracePreset({
+        id: chartId,
+        label: `${title} (TODO)`,
+        procedureId: chartId,
+        chartId,
+      }),
+    ],
+  };
+}
+
+function verifiedPreset({
+  id,
+  label,
+  procedureId = id,
+  chartId,
+  chartTitle,
+  startId,
+  finalId,
+  axisToId = finalId,
+  originId = "CHE",
+  constructionDefaults,
+}) {
+  return {
+    id,
+    label,
+    procedureId,
+    chartId,
+    chartOptionId: chartId,
+    chartTitle,
+    suggestedChartFilename: `${chartId}.png`,
+    procedureType: "SID",
+    status: "verified",
+    traceType: "APPROX_TURN",
+    coordinateSpace: "anchor-normalized",
+    anchorFrame: {
+      originId,
+      axisToId,
+      startId,
+      finalId,
+    },
+    constructionDefaults,
+  };
+}
+
+function pendingTracePreset({
+  id,
+  label,
+  procedureId = id,
+  chartId,
+  endpointId = null,
+  procedureType = "SID_TODO",
+}) {
+  return {
+    id,
+    label,
+    procedureId,
+    chartId,
+    chartOptionId: chartId,
+    chartTitle: `${chartTitleFromId(chartId)} DEPARTURE`,
+    suggestedChartFilename: `${chartId}.png`,
+    procedureType,
+    status: "pending_trace",
+    pendingTrace: true,
+    routeFixes: [],
+    displayPath: null,
+    displayTrace: null,
+    legs: null,
+    endpointId,
+    traceType: "APPROX_TURN",
+    coordinateSpace: "anchor-normalized",
+    anchorFrame: GENERIC_TODO_ANCHOR_FRAME,
+    constructionDefaults: GENERIC_TODO_CONSTRUCTION_DEFAULTS,
+    notes: "TODO chart-only authoring preset. Display trace, route fixes, and legs are intentionally empty until manual tracing.",
+  };
+}
+
+export const rjccDepartureChartManifest = [
+  chartRecord("KURIS_SEVEN", {
+    title: "KURIS SEVEN",
+    status: "verified",
+    procedureType: "SID",
+    variants: [
+      verifiedPreset({
+        id: "KURIS_SEVEN_RWY19",
+        label: "KURIS SEVEN RWY19",
+        chartId: "KURIS_SEVEN",
+        chartTitle: "KURIS SEVEN DEPARTURE",
+        originId: "CHE",
+        axisToId: "KURIS",
+        startId: "RJCC_RWY19_REPRESENTATIVE",
+        finalId: "KURIS",
+        constructionDefaults: {
+          stationId: "CHE",
+          radialDeg: 11,
+          bearingType: "MAGNETIC",
+          magneticVariationDeg: -9,
+          dmeNm: [2, 6],
+        },
+      }),
+      verifiedPreset({
+        id: "KURIS_SEVEN_RWY01",
+        label: "KURIS SEVEN RWY01",
+        chartId: "KURIS_SEVEN",
+        chartTitle: "KURIS SEVEN DEPARTURE",
+        originId: "CHE",
+        axisToId: "KURIS",
+        startId: "RJCC_RWY01_REPRESENTATIVE",
+        finalId: "KURIS",
+        constructionDefaults: {
+          stationId: "CHE",
+          radialDeg: 11,
+          bearingType: "MAGNETIC",
+          magneticVariationDeg: -9,
+          dmeNm: [],
+        },
+      }),
+    ],
+  }),
+  chartRecord("CHITOSE_FOUR", {
+    title: "CHITOSE FOUR",
+    status: "verified",
+    procedureType: "SID",
+    variants: [
+      verifiedPreset({
+        id: "CHITOSE_FOUR_RWY01",
+        label: "CHITOSE FOUR RWY01",
+        chartId: "CHITOSE_FOUR",
+        chartTitle: "CHITOSE FOUR DEPARTURE",
+        originId: "CHE",
+        axisToId: "CHE",
+        startId: "RJCC_RWY01_REPRESENTATIVE",
+        finalId: "CHE",
+        constructionDefaults: {
+          stationId: "CHE",
+          bearingType: "MAGNETIC",
+          magneticVariationDeg: -9,
+          dmeNm: [6.3, 10],
+        },
+      }),
+      verifiedPreset({
+        id: "CHITOSE_FOUR_RWY19",
+        label: "CHITOSE FOUR RWY19",
+        chartId: "CHITOSE_FOUR",
+        chartTitle: "CHITOSE FOUR DEPARTURE",
+        originId: "RJCC_RWY19_REPRESENTATIVE",
+        axisToId: "CHE",
+        startId: "RJCC_RWY19_REPRESENTATIVE",
+        finalId: "CHE",
+        constructionDefaults: {
+          stationId: "CHE",
+          bearingType: "MAGNETIC",
+          magneticVariationDeg: -9,
+          dmeNm: [6.3],
+        },
+      }),
+    ],
+  }),
+  chartRecord("DALBI_ONE"),
+  chartRecord("HAKODATE_SEVEN"),
+  chartRecord("HOKUTO_SEVEN"),
+  chartRecord("JUGGLAR_ONE"),
+  chartRecord("MUKAWA_EIGHT"),
+  chartRecord("NAGANUMA_FIVE"),
+  chartRecord("PATRUSH_ONE"),
+  chartRecord("REZOT_TWO"),
+  chartRecord("SAVIT_TWO"),
+  chartRecord("SOSHU_ONE"),
+  chartRecord("TEKKO_ONE"),
+  chartRecord("TOBBY_EIGHT"),
+  chartRecord("TOKACHI_TWO", {
+    variants: [
+      pendingTracePreset({
+        id: "TOKACHI_TWO_BOKSO",
+        label: "TOKACHI TWO BOKSO (TODO)",
+        procedureId: "TOKACHI_TWO_BOKSO",
+        chartId: "TOKACHI_TWO",
+        endpointId: "BOKSO",
+      }),
+      pendingTracePreset({
+        id: "TOKACHI_TWO_RAKNO",
+        label: "TOKACHI TWO RAKNO (TODO)",
+        procedureId: "TOKACHI_TWO_RAKNO",
+        chartId: "TOKACHI_TWO",
+        endpointId: "RAKNO",
+      }),
+    ],
+  }),
+  chartRecord("YOSAN_ONE"),
+  chartRecord("YUFUTSU_FIVE"),
+];
+
+export const rjccDepartureChartOptions = rjccDepartureChartManifest.map((chart) => ({
+  id: chart.chartId,
+  label: chart.title,
+  href: chart.imageUrl,
+  width: chart.width,
+  height: chart.height,
+  status: chart.status,
+  procedureType: chart.procedureType,
+}));
+
+export const rjccDepartureAuthoringPresets = rjccDepartureChartManifest.flatMap((chart) =>
+  chart.variants.map((variant) => ({
+    ...variant,
+    chartTitle: variant.chartTitle || `${chart.title} DEPARTURE`,
+    suggestedChartFilename: variant.suggestedChartFilename || chart.filename,
+  })),
+);
+
