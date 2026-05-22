@@ -8,7 +8,12 @@ import { rawNavaids } from "../../data/jaip/rjcc/navaids.js";
 import { rawPoints } from "../../data/jaip/rjcc/acaPoints.js";
 import rjccCoastlineHires from "../../data/jaip/rjcc/rjcc_coastline_hires.json";
 import { parseDMS } from "../../geo/dms.js";
-import { buildProcedureDisplayOptions, getAllProcedures } from "../../core-v2/procedures/procedureLookup.js";
+import { chartOverlayDiagnostics, chartOverlays, chartOverlaysByChartId } from "../../data/airspace/rjcc/chartOverlays.js";
+import { derivedDepartureProcedures } from "../../data/airspace/rjcc/procedures.js";
+import { manualPreviewDiagnostics, manualProcedurePreviews } from "../../data/airspace/rjcc/manualProcedurePreviews.js";
+import { rjccDepartureChartOptions } from "../../data/airports/rjcc/departureChartManifest.js";
+import { buildProcedureRoutePreview, expandProcedureRouteEntries } from "../../core-v2/procedures/procedureRouteBuilder.js";
+import { buildProcedureDisplayOptions, buildWaypointLookup, getAllProcedures } from "../../core-v2/procedures/procedureLookup.js";
 import { RjccJaipMapLayer } from "../../map/jaip/RjccJaipMapLayer.jsx";
 import { makePathHelpers } from "../../map/jaip/pathHelpers.js";
 import { LABEL_MODES, defaultFixFilterState, defaultNavaidFilterState, filterFixes, filterLocalizers, filterNavaids } from "../../map/jaip/semanticFilters.js";
@@ -18,6 +23,7 @@ import { ConstructionOverlayLayer } from "./ConstructionOverlayLayer.jsx";
 import { buildRadialDmePoint, projectPointToRadial, snapPointToDmeCircle, nearestPointOnPolyline } from "./constructionGeometry.js";
 import { deriveProcedureTraceSetup } from "./deriveProcedureTraceSetup.js";
 import { getManualPreviewPreset, manualPreviewPresets } from "./manualPreviewPresets.js";
+import { formatExportReadinessSummary, formatQcJson, formatQcReport, runProcedureAuthoringQc, unresolvedFixesFromQc } from "./procedureAuthoringQc.js";
 import { getRepresentativeDepartureEnd, getRunwayEndById } from "./runwayAnchors.js";
 import { clearDraft, hasDraft, loadDraftWithMeta, loadLastDraftPresetId, saveDraft, saveLastDraftPresetId } from "./traceEditorDraftStorage.js";
 import { TRACE_TYPES, TraceEditorLayer } from "./TraceEditorLayer.jsx";
@@ -256,6 +262,9 @@ function buildExportPayload({ traceId, traceType, points, notes, overlay, anchor
     traceType,
     status: status || "pending_verify",
     approximate: true,
+    displayOnly: true,
+    guidanceEnabled: false,
+    legs: null,
     source: "manual chart trace",
     coordinateSpace: useAnchorNormalized ? "anchor-normalized" : "rjcc-projected",
     points: useAnchorNormalized ? anchorExport.points : rawProjectedPoints,
@@ -292,11 +301,45 @@ function downloadTextFile(filename, content, mimeType = "text/javascript;charset
   URL.revokeObjectURL(url);
 }
 
-function buildManualPreviewFile({ procedureId, payload }) {
+async function copyTextToClipboard(text) {
+  let clipboardError = null;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (error) {
+      clipboardError = error;
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  try {
+    const copied = document.execCommand("copy");
+    if (!copied) throw clipboardError || new Error("copy command failed");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function buildManualPreviewFile({ procedureId, payload, qcReport }) {
   const objectText = JSON.stringify(payload, null, 2);
+  const qcHeader = qcReport
+    ? `// QC status: ${qcReport.status}\n// QC warnings: ${qcReport.summary?.warn || 0}\n`
+    : "";
   return `// src/data/airspace/rjcc/manual-previews/${procedureId}.js
 // Display-only manual procedure preview geometry.
 // Not authoritative navigation data. Not used by gameplay.
+// Generated from RJCC Procedure Authoring Tool.
+${qcHeader}
 
 export const ${procedureId} = ${objectText};
 `;
@@ -422,6 +465,7 @@ export default function RjccProcedureTraceEditor() {
   const [draftStatus, setDraftStatus] = useState("No local draft");
   const [draftSavedAt, setDraftSavedAt] = useState(null);
   const [draftWarning, setDraftWarning] = useState("");
+  const [qcCopyStatus, setQcCopyStatus] = useState("");
   const zoomEndTimerRef = useRef(null);
   const droppedObjectUrlRef = useRef(null);
   const draftAutosaveTimerRef = useRef(null);
@@ -533,6 +577,8 @@ export default function RjccProcedureTraceEditor() {
   const stationOptions = useMemo(() => STATION_IDS.map((id) => stationById(rjccNavaids, id)).filter(Boolean), []);
   const procedureOptions = useMemo(() => buildProcedureDisplayOptions(), []);
   const proceduresForSetup = useMemo(() => getAllProcedures(), []);
+  const waypointLookup = useMemo(() => buildWaypointLookup(), []);
+  const expandedProceduresForQc = useMemo(() => expandProcedureRouteEntries(proceduresForSetup), [proceduresForSetup]);
   const waypointSnapTargets = useMemo(() => buildWaypointSnapTargets({
     fixes: rjccFixes,
     navaids: rjccNavaids,
@@ -630,6 +676,7 @@ export default function RjccProcedureTraceEditor() {
   const jsonExport = useMemo(() => JSON.stringify(exportPayload, null, 2), [exportPayload]);
   const jsExport = useMemo(() => `export const manualProcedurePreviewGeometry = {\n  ${JSON.stringify(exportPayload.id)}: ${jsonExport}\n};\n`, [exportPayload.id, jsonExport]);
   const exportProcedureId = validProcedureId(traceId) ? traceId : DEFAULT_TRACE_ID;
+  const exportChartId = resolvedChartId || overlayExport.chartId || exportProcedureId;
   const manualPreviewFilePayload = useMemo(() => ({
     ...exportPayload,
     id: exportProcedureId,
@@ -641,11 +688,6 @@ export default function RjccProcedureTraceEditor() {
     },
     overlay: overlayExport,
   }), [exportPayload, exportProcedureId, overlayExport, traceType]);
-  const manualPreviewFileContent = useMemo(
-    () => buildManualPreviewFile({ procedureId: exportProcedureId, payload: manualPreviewFilePayload }),
-    [exportProcedureId, manualPreviewFilePayload]
-  );
-  const exportChartId = resolvedChartId || overlayExport.chartId || exportProcedureId;
   const chartOverlayPayload = useMemo(() => ({
     id: `${exportChartId}_CHART_OVERLAY`,
     chartId: exportChartId,
@@ -811,6 +853,129 @@ export default function RjccProcedureTraceEditor() {
     traceType,
     waypointSnapQuery,
   ]);
+  const qcChartAsset = useMemo(
+    () => rjccDepartureChartOptions.find((chart) => chart.id === exportChartId || chart.id === selectedChartId) || (selectedChart.href ? selectedChart : null),
+    [exportChartId, selectedChart, selectedChartId]
+  );
+  const qcManualPreview = manualProcedurePreviews[exportProcedureId] || manualProcedurePreviews[selectedManualPreset?.id] || null;
+  const qcChartOverlay = chartOverlays[exportProcedureId] || chartOverlays[exportChartId] || chartOverlaysByChartId[exportChartId] || null;
+  const qcDerivedProcedure = useMemo(
+    () => derivedDepartureProcedures.find((procedure) => procedure.id === exportProcedureId) || null,
+    [exportProcedureId]
+  );
+  const qcProcedureEntry = useMemo(
+    () => expandedProceduresForQc.find((procedure) => procedure.id === exportProcedureId) || null,
+    [expandedProceduresForQc, exportProcedureId]
+  );
+  const qcNavSpec = selectedManualPreset?.navSpec || qcProcedureEntry?.navSpec || (routeFixes.length ? "RNAV1" : null);
+  const qcRunwayIds = selectedManualPreset?.runwayIds || qcProcedureEntry?.runwayIds || [];
+  const qcProcedureForPreview = useMemo(() => ({
+    ...(qcProcedureEntry || {}),
+    id: exportProcedureId,
+    name: qcProcedureEntry?.name || selectedManualPreset?.label || exportProcedureId,
+    type: qcProcedureEntry?.type || "SID",
+    navSpec: qcNavSpec,
+    airportId: qcProcedureEntry?.airportId || "RJCC",
+    runwayIds: qcRunwayIds,
+    startId: startAnchorId || qcProcedureEntry?.startId || qcProcedureEntry?.startAnchorId || null,
+    startAnchorId: startAnchorId || qcProcedureEntry?.startAnchorId || qcProcedureEntry?.startId || null,
+    routeFixes: routeFixes.length ? routeFixes : qcProcedureEntry?.routeFixes || [],
+    segments: routeFixes.length ? [] : qcProcedureEntry?.segments || [],
+    legs: routeFixes.length ? [] : qcProcedureEntry?.legs || [],
+  }), [exportProcedureId, qcNavSpec, qcProcedureEntry, qcRunwayIds, routeFixes, selectedManualPreset, startAnchorId]);
+  const qcProcedureRoutePreview = useMemo(
+    () => buildProcedureRoutePreview({ procedure: qcProcedureForPreview, waypointLookup }),
+    [qcProcedureForPreview, waypointLookup]
+  );
+  const qcDraftMeta = useMemo(() => loadDraftWithMeta(draftPresetId), [draftPresetId, draftSavedAt, draftStatus]);
+  const qcReport = useMemo(() => runProcedureAuthoringQc({
+    preset: selectedManualPreset,
+    editorState: {
+      presetId: draftPresetId,
+      procedureId: exportProcedureId,
+      chartId: exportChartId,
+      selectedChartId,
+      status: exportPayload.status,
+      navSpec: qcNavSpec,
+      runwayIds: qcRunwayIds,
+      source: selectedManualPreset?.source || qcProcedureEntry?.source || exportPayload.source,
+      airac_cycle: selectedManualPreset?.airac_cycle ?? qcProcedureEntry?.airac_cycle ?? null,
+      routeFixes,
+      startId: startAnchorId || null,
+      finalId: finalAnchorId || null,
+      axisToId: axisTargetAnchorId || null,
+      traceType,
+      points: tracePoints,
+      anchorFrame: {
+        originId: originAnchorId,
+        axisToId: axisTargetAnchorId,
+        startId: startAnchorId,
+        finalId: finalAnchorId,
+      },
+      overlay: chartOverlayPayload,
+      exportPayload,
+      displayOnly: true,
+      guidanceEnabled: false,
+      legs: null,
+    },
+    routeFixes,
+    selectedChartId,
+    chartAsset: qcChartAsset,
+    chartOverlay: qcChartOverlay,
+    manualPreview: qcManualPreview,
+    waypointLookup,
+    snapTargets: waypointSnapTargets,
+    derivedProcedure: qcDerivedProcedure || qcProcedureEntry,
+    procedureEntry: qcProcedureEntry,
+    procedureRoutePreview: qcProcedureRoutePreview,
+    draft: qcDraftMeta.draft,
+    draftError: qcDraftMeta.error,
+    registries: {
+      procedureIds: procedureOptions.map((option) => option.id),
+      manualPreviewDiagnostics,
+      chartOverlayDiagnostics,
+    },
+  }), [
+    axisTargetAnchorId,
+    chartOverlayPayload,
+    draftPresetId,
+    exportChartId,
+    exportPayload,
+    exportProcedureId,
+    finalAnchorId,
+    originAnchorId,
+    procedureOptions,
+    qcChartAsset,
+    qcChartOverlay,
+    qcDerivedProcedure,
+    qcDraftMeta,
+    qcManualPreview,
+    qcNavSpec,
+    qcProcedureEntry,
+    qcProcedureRoutePreview,
+    qcRunwayIds,
+    routeFixes,
+    selectedChartId,
+    selectedManualPreset,
+    startAnchorId,
+    tracePoints,
+    traceType,
+    waypointLookup,
+    waypointSnapTargets,
+  ]);
+  const qcChecksByCategory = useMemo(() => qcReport.checks.reduce((groups, check) => {
+    groups[check.category] = groups[check.category] || [];
+    groups[check.category].push(check);
+    return groups;
+  }, {}), [qcReport]);
+  const qcReportText = useMemo(() => formatQcReport(qcReport), [qcReport]);
+  const qcJsonText = useMemo(() => formatQcJson(qcReport), [qcReport]);
+  const qcUnresolvedFixesText = useMemo(() => unresolvedFixesFromQc(qcReport).join("\n"), [qcReport]);
+  const qcReadinessSummary = useMemo(() => formatExportReadinessSummary(qcReport), [qcReport]);
+  const manualPreviewFileContent = useMemo(
+    () => buildManualPreviewFile({ procedureId: exportProcedureId, payload: manualPreviewFilePayload, qcReport }),
+    [exportProcedureId, manualPreviewFilePayload, qcReport]
+  );
 
   const updateOverlay = (patch) => setOverlayTransform((prev) => ({ ...prev, ...patch }));
   const nudgeOverlay = (dx, dy) => setOverlayTransform((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
@@ -828,6 +993,17 @@ export default function RjccProcedureTraceEditor() {
   const rotateOverlay = (delta) => setOverlayTransform((prev) => ({ ...prev, rotationDeg: prev.rotationDeg + delta }));
   const resetOverlay = () => setOverlayTransform(DEFAULT_OVERLAY_TRANSFORM);
   const resetView = () => setView(fullView);
+  const runQcNow = () => {
+    setQcCopyStatus(`QC refreshed ${formatDraftTime(new Date().toISOString())}`);
+  };
+  const copyQcText = async (label, text) => {
+    try {
+      await copyTextToClipboard(text || "");
+      setQcCopyStatus(`${label} copied`);
+    } catch (error) {
+      setQcCopyStatus(`Copy failed: ${error instanceof Error ? error.message : "clipboard unavailable"}`);
+    }
+  };
   const applyResolvedSetup = (setup) => {
     if (!setup) return;
     if (setup.procedureId) setTraceId(setup.procedureId);
@@ -1906,6 +2082,45 @@ export default function RjccProcedureTraceEditor() {
             })}
           </div>
         </details>
+        <details open style={sectionStyle}>
+          <summary style={summaryStyle}>QC / QA</summary>
+          <div style={{ display: "grid", gap: 5 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+              <span style={{
+                color: qcReport.status === "ERROR" ? "#ffb7a8" : qcReport.status === "VERIFIED" || qcReport.status === "READY" ? "#d8fbff" : "#ffcf86",
+                border: "1px solid rgba(95,168,179,.35)",
+                padding: "2px 6px",
+                fontWeight: 900,
+              }}>{qcReport.status}</span>
+              <span style={{ color: "#d8fbff", fontSize: 10 }}>{qcReport.summary.ok} OK</span>
+              <span style={{ color: "#ffcf86", fontSize: 10 }}>{qcReport.summary.warn} WARN</span>
+              <span style={{ color: "#ffb7a8", fontSize: 10 }}>{qcReport.summary.error} ERROR</span>
+            </div>
+            <div style={rowStyle}>
+              <button type="button" onClick={runQcNow} style={buttonStyle}>Run QC</button>
+              <button type="button" onClick={() => copyQcText("QC report", qcReportText)} style={buttonStyle}>Copy QC Report</button>
+              <button type="button" onClick={() => copyQcText("QC JSON", qcJsonText)} style={buttonStyle}>Copy QC JSON</button>
+              <button type="button" onClick={() => copyQcText("Unresolved fixes", qcUnresolvedFixesText || "No unresolved route fixes.")} style={buttonStyle}>Copy unresolved fixes only</button>
+              <button type="button" onClick={() => copyQcText("Readiness summary", qcReadinessSummary)} style={buttonStyle}>Copy export readiness summary</button>
+            </div>
+            <div style={{ color: qcReport.status === "ERROR" ? "#ffb7a8" : "#9ed7df", fontSize: 10 }}>{qcReadinessSummary}</div>
+            {qcCopyStatus && <div style={{ color: "#d8fbff", fontSize: 10 }}>{qcCopyStatus}</div>}
+            <div style={{ display: "grid", gap: 5, maxHeight: 300, overflowY: "auto" }}>
+              {Object.entries(qcChecksByCategory).map(([category, checks]) => (
+                <div key={category} style={{ border: "1px solid rgba(95,168,179,.16)", padding: 5 }}>
+                  <div style={{ color: "#d8fbff", fontWeight: 900, marginBottom: 3 }}>{category}</div>
+                  <div style={{ display: "grid", gap: 3 }}>
+                    {checks.map((check) => (
+                      <div key={`${check.category}-${check.code}-${check.message}`} style={{ color: check.level === "error" ? "#ffb7a8" : check.level === "warn" ? "#ffcf86" : "#8fcbd4", fontSize: 10, lineHeight: 1.25 }}>
+                        [{check.level.toUpperCase()}] {check.code} - {check.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
       </div>
 
       <div style={{ ...panelStyle, right: 14, top: 14, width: 430, bottom: 14, display: "grid", gridTemplateRows: "auto auto auto 1fr 1fr", gap: 8 }}>
@@ -1926,6 +2141,9 @@ export default function RjccProcedureTraceEditor() {
           <div style={rowStyle}>
             <button type="button" onClick={downloadManualPreviewJs} disabled={!validProcedureId(traceId)} style={buttonStyle}>下载航路JS</button>
             <button type="button" onClick={downloadChartOverlayJs} disabled={!validProcedureId(traceId)} style={buttonStyle}>下载航图叠加JS</button>
+          </div>
+          <div style={{ color: qcReport.status === "ERROR" ? "#ffb7a8" : qcReport.summary.warn ? "#ffcf86" : "#9ed7df", fontSize: 10, lineHeight: 1.35 }}>
+            QC {qcReport.status}: {qcReadinessSummary}
           </div>
           <div style={{ color: "#7fc6cf", fontSize: 10, lineHeight: 1.35 }}>
             下载后，把航路JS放入 src/data/airspace/rjcc/manual-previews/；把航图叠加JS放入 src/data/airspace/rjcc/chart-overlays/。刷新后会自动注册，不需要手动编辑 index.js。
