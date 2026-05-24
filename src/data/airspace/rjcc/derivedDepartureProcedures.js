@@ -54,6 +54,10 @@ function buildDerivedProcedure(preset) {
   const routeFixes = routeFixesFrom(preview, preset);
   const startId = preview?.routeBuilder?.startId || preview?.anchorFrame?.startId || preset.anchorFrame?.startId || null;
   const finalId = preview?.routeBuilder?.finalId || preview?.anchorFrame?.finalId || preset.anchorFrame?.finalId || null;
+  const initialDisplayClimb = preview?.routeBuilder?.initialDisplayClimb
+    || preview?.initialDisplayClimb
+    || preset.initialDisplayClimb
+    || null;
 
   if (!preview && !routeFixes.length) return null;
 
@@ -74,7 +78,13 @@ function buildDerivedProcedure(preset) {
     startAnchorId: startId,
     finalId,
     anchorFrame: preview?.anchorFrame || preset.anchorFrame || null,
-    routeBuilder: preview?.routeBuilder || null,
+    routeBuilder: preview?.routeBuilder || (initialDisplayClimb ? {
+      startId,
+      finalId,
+      routeFixes,
+      initialDisplayClimb,
+    } : null),
+    initialDisplayClimb,
     legs: null,
     routeFixes,
     chartId: preset.chartId,

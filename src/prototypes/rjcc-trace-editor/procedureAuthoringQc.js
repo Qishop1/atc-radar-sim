@@ -21,8 +21,32 @@ export const VALID_AUTHORING_STATUSES = new Set([
   "deprecated",
 ]);
 
+export const QC_CATEGORY_LABELS = {
+  Identity: "身份",
+  Chart: "航图",
+  Route: "路线",
+  Conventional: "传统程序",
+  "Manual Preview": "手动预览",
+  Draft: "草稿",
+  "Display Safety": "显示安全",
+  Metadata: "元数据",
+};
+
+export const QC_LEVEL_LABELS = {
+  ok: "通过",
+  warn: "警告",
+  error: "错误",
+};
+
+export const QC_STATUS_LABELS = {
+  READY: "可导出",
+  PENDING_VERIFY: "待复核",
+  INCOMPLETE: "未完成",
+  ERROR: "有错误",
+  VERIFIED: "已验证",
+};
+
 const INCOMPLETE_WARNING_CODES = new Set([
-  "CHART_OVERLAY_EXISTS",
   "DERIVED_PROCEDURE_EXISTS",
   "ROUTE_FIXES_PRESENT_FOR_RNAV",
   "START_ID_PRESENT",
@@ -30,6 +54,27 @@ const INCOMPLETE_WARNING_CODES = new Set([
   "RUNWAY_IDS_PRESENT",
   "STATUS_PRESENT",
 ]);
+
+function formatIdList(values = []) {
+  return values.filter(Boolean).join(", ") || "无";
+}
+
+export function getQcCategoryLabel(category) {
+  return QC_CATEGORY_LABELS[category] || category || "其他";
+}
+
+export function getQcLevelLabel(level) {
+  return QC_LEVEL_LABELS[level] || level || "未知";
+}
+
+export function getQcStatusLabel(status) {
+  return QC_STATUS_LABELS[status] || status || "未知";
+}
+
+export function formatQcStatus(status) {
+  const label = getQcStatusLabel(status);
+  return status && label !== status ? `${label} (${status})` : label;
+}
 
 function isObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -70,6 +115,121 @@ function addCheck(checks, category, level, code, message, detail = {}) {
   checks.push({ category, level, code, message, detail });
 }
 
+export function getQcCheckMessage(check = {}) {
+  const detail = check.detail || {};
+  switch (check.code) {
+    case "PRESET_ID_PRESENT":
+      return check.level === "ok" ? `预设 ID ${detail.presetId} 已设置。` : "缺少预设 ID。";
+    case "PROCEDURE_ID_PRESENT":
+      return check.level === "ok" ? `程序 ID ${detail.procedureId} 已设置。` : "缺少程序 ID。";
+    case "PRESET_PROCEDURE_ID_MATCH":
+      return check.level === "ok" ? "预设 ID 与当前程序 ID 匹配。" : `预设期望 ${detail.expectedProcedureId}，但当前程序 ID 是 ${detail.procedureId}。`;
+    case "MANIFEST_ENTRY_EXISTS":
+      return check.level === "ok" ? "已找到清单预设。" : "当前程序没有匹配的清单预设。";
+    case "DERIVED_PROCEDURE_EXISTS":
+      return check.level === "ok" ? "JAIP 可用的显示程序条目已存在。" : "还没有找到派生或显式显示程序条目。";
+    case "UNIQUE_PROCEDURE_ID":
+      return check.level === "ok" ? "当前程序 ID 没有重复。" : `发现重复程序 ID：${detail.procedureId}。`;
+    case "UNIQUE_MANUAL_PREVIEW_ID":
+      return check.level === "ok" ? "当前程序没有重复的手动预览 ID。" : `发现重复手动预览 ID：${detail.duplicates?.map((item) => item.id).join(", ") || detail.procedureId}。`;
+    case "UNIQUE_CHART_OVERLAY_ID":
+      return check.level === "ok" ? "当前航图没有重复的 overlay ID / chartId。" : "发现重复航图 overlay ID / chartId。";
+    case "DUPLICATE_ID_WARNINGS":
+      return check.level === "ok" ? "注册表没有重复 ID 警告。" : "注册表存在重复 ID 警告。";
+    case "CHART_ID_PRESENT":
+      return check.level === "ok" ? `航图 ID ${detail.chartId} 已设置。` : "缺少航图 ID。";
+    case "CHART_ASSET_EXISTS":
+      return check.level === "ok" ? "已在 RJCC 航图清单中找到航图资源。" : "RJCC 航图清单中找不到该航图资源。";
+    case "CHART_OVERLAY_EXISTS":
+      if (check.level === "ok" && detail.chartOverlayId) return "已找到保存的航图 overlay。";
+      if (check.level === "ok") return "当前草稿已有航图 overlay，可导出保存。";
+      return "没有保存的航图 overlay，也没有当前草稿 overlay。";
+    case "NO_SAVED_CHART_OVERLAY":
+      return detail.hasDraftOverlay ? "没有保存的航图 overlay；当前草稿 overlay 仍可导出。" : "没有保存的航图 overlay。";
+    case "CHART_OVERLAY_ID_MATCH":
+      return check.level === "ok" ? "航图 overlay 的 chartId 与预期匹配。" : `航图 overlay chartId ${detail.overlayChartId} 与预期 ${detail.chartId} 不一致。`;
+    case "CHART_REFERENCE_ONLY":
+      return "航图 overlay 仅作参考/ghost；路线几何应来自航点或手动显示轨迹。";
+    case "ROUTE_FIXES_PRESENT_FOR_RNAV":
+      return check.level === "ok" ? `RNAV 路线已有 ${detail.routeFixes?.length || 0} 个 routeFix。` : "RNAV 路线缺少 routeFixes 或生成的实体显示路线。";
+    case "ROUTE_FIXES_RESOLVE":
+      return check.level === "ok" ? `全部 ${detail.routeFixes?.length || 0} 个 routeFix 均可解析。` : `未解析 routeFix：${formatIdList(detail.unresolved)}。`;
+    case "ROUTE_FIXES_FINITE_COORDS":
+      return check.level === "ok" ? "已解析 routeFix 均有有效坐标。" : `以下 routeFix 坐标无效：${formatIdList(detail.nonFinite)}。`;
+    case "ROUTE_FIXES_NO_DUPLICATES":
+      return check.level === "ok" ? "routeFix 列表没有连续重复项。" : `发现可疑连续重复 fix：${formatIdList(detail.consecutiveDuplicates)}。`;
+    case "START_ID_PRESENT":
+      return check.level === "ok" ? `起点 ID ${detail.startId} 已设置。` : "缺少起点 ID。";
+    case "START_ID_RESOLVES":
+      return check.level === "ok" ? "起点 ID 可解析。" : `起点 ID ${detail.startId} 无法解析。`;
+    case "FINAL_ID_PRESENT":
+      return check.level === "ok" ? `终点 ID ${detail.finalId} 已设置。` : "缺少终点/endpoint ID；显示路线会使用最后一个 routeFix。";
+    case "FINAL_ID_MATCHES_LAST_ROUTE_FIX":
+      return check.level === "ok" ? "终点 ID 与最后一个 routeFix 匹配。" : `终点 ID ${detail.finalId} 与最后一个 routeFix ${detail.lastRouteFix} 不一致。`;
+    case "RNAV_NO_APPROX_ARC":
+      return check.level === "ok" ? "RNAV 路线没有生成近似曲线/大弧。" : "RNAV 路线生成了近似曲线段。";
+    case "RNAV_SOLID_ROUTE":
+      return check.level === "ok" ? "RNAV 显示路线已标记为实体路线。" : "RNAV 显示路线没有标记为 route-solid。";
+    case "RNAV_START_CONNECTOR_PRESENT":
+      return check.level === "ok" ? "RNAV 起点连接段位于第一个 routeFix 前。" : "无法确认 RNAV 起点连接段是否在路线点序列中。";
+    case "RNAV_INITIAL_HEADING_GATE_PRESENT":
+      return check.level === "ok" ? "RNAV 初始跑道航向 500FT gate 已出现在显示点序列中。" : "未确认 RNAV 初始跑道航向 gate；请检查 initialDisplayClimb 元数据。";
+    case "RNAV_ROUTE_HAS_MIN_POINTS":
+      return check.level === "ok" ? "RNAV 路线至少有两个显示点。" : "RNAV 路线少于两个显示点。";
+    case "CONVENTIONAL_APPROX_MARKED":
+      return "传统 SID 允许使用近似/手动画线显示。";
+    case "CONVENTIONAL_CAN_USE_MANUAL_TRACE":
+      return "传统 SID 预览允许使用手动轨迹。";
+    case "APPROX_SEGMENTS_NOT_AUTHORITATIVE":
+      return "近似几何仅用于显示，不是权威导航数据。";
+    case "MANUAL_PREVIEW_EXISTS":
+      if (check.level === "ok") return "已找到保存的手动预览。";
+      return "没有保存的手动预览；当前草稿仍可继续编辑/导出。";
+    case "MANUAL_PREVIEW_POINTS_VALID":
+      return check.level === "ok" ? "手动预览点数组结构有效。" : "手动预览点字段不是数组。";
+    case "MANUAL_PREVIEW_POINTS_FINITE":
+      return check.level === "ok" ? "手动预览点坐标有效。" : "部分手动预览点坐标不是有限数值。";
+    case "MANUAL_PREVIEW_TRACE_TYPE_PRESENT":
+      return check.level === "ok" ? "traceType 已设置。" : "缺少 traceType；渲染器会推断默认类型。";
+    case "MANUAL_PREVIEW_ANCHOR_FRAME_VALID":
+      return check.level === "ok" ? "手动预览 anchor frame 字段有效。" : `anchor frame 字段无效：${formatIdList(detail.invalidAnchorValues)}。`;
+    case "MANUAL_PREVIEW_EXPORTABLE":
+      return check.level === "ok" ? "当前编辑状态可以序列化导出。" : "当前编辑状态无法序列化。";
+    case "DRAFT_EXISTS":
+      return check.level === "ok" ? "当前预设存在本地草稿。" : "当前预设没有本地草稿。";
+    case "DRAFT_SCHEMA_VALID":
+      return check.level === "ok" ? "草稿 schema 有效，或没有草稿。" : `草稿 schema 存在问题：${detail.draftError}。`;
+    case "DRAFT_PRESET_MATCH":
+      return check.level === "ok" ? "草稿 presetId 与当前预设匹配。" : "草稿 presetId 与当前预设不匹配。";
+    case "DRAFT_EXPORTABLE":
+      return check.level === "ok" ? "草稿/编辑状态可以序列化。" : "草稿/编辑状态无法序列化。";
+    case "DISPLAY_ONLY_TRUE_FOR_DERIVED":
+      return check.level === "ok" ? "显示程序已标记 displayOnly。" : "显示程序应标记为 displayOnly。";
+    case "GUIDANCE_DISABLED_FOR_DERIVED":
+      return check.level === "ok" ? "显示程序已禁用 guidance。" : "显示程序应禁用 guidance。";
+    case "LEGS_NULL_OR_DISPLAY_ONLY":
+      return check.level === "ok" ? "legs 为空，或仅用于显示。" : "legs 应为空或明确为 display-only。";
+    case "NO_AIRCRAFT_GUIDANCE_FIELDS_ENABLED":
+      return check.level === "ok" ? "未启用飞机引导字段。" : "检测到飞机引导字段被启用。";
+    case "NO_GAMEPLAY_BINDING":
+      return check.level === "ok" ? "没有绑定 gameplay 行为。" : "检测到 gameplay 绑定。";
+    case "NAVSPEC_PRESENT":
+      return check.level === "ok" ? `navSpec ${detail.navSpec} 已设置。` : "缺少 navSpec。";
+    case "RUNWAY_IDS_PRESENT":
+      return check.level === "ok" ? `已设置 ${detail.runwayIds?.length || 0} 个 runwayIds。` : "缺少 runwayIds。";
+    case "SOURCE_PRESENT":
+      return check.level === "ok" ? "source 元数据已设置。" : "缺少 source 元数据。";
+    case "AIRAC_CYCLE_PRESENT_OR_WARN":
+      return check.level === "ok" ? "AIRAC cycle 元数据已设置。" : "AIRAC cycle 元数据缺失或为 null。";
+    case "STATUS_PRESENT":
+      return check.level === "ok" ? `状态 ${detail.status} 已设置。` : "缺少状态。";
+    case "STATUS_VALID":
+      return check.level === "ok" ? "状态值合法。" : `状态 ${detail.status} 不在允许列表中。`;
+    default:
+      return check.message || "";
+  }
+}
+
 function resolveWaypoint(id, input) {
   if (!id) return null;
   const normalized = normalizeId(id);
@@ -100,6 +260,16 @@ function routePointIds(input) {
   const previewPoints = input?.procedureRoutePreview?.points || [];
   if (previewPoints.length) return previewPoints.map((point) => point.id).filter(Boolean);
   return (input?.editorState?.points || []).map((point) => point.id).filter(Boolean);
+}
+
+function initialDisplayClimb(input) {
+  const climb = input?.editorState?.initialDisplayClimb
+    || input?.derivedProcedure?.initialDisplayClimb
+    || input?.derivedProcedure?.routeBuilder?.initialDisplayClimb
+    || input?.preset?.initialDisplayClimb
+    || null;
+  if (Array.isArray(climb)) return climb.find((item) => item?.type === "RUNWAY_HEADING_TO_ALTITUDE_GATE") || null;
+  return climb;
 }
 
 function checkIdentity(checks, input) {
@@ -229,6 +399,8 @@ function checkRoute(checks, input) {
   const routeFixes = editorState.routeFixes || [];
   const traceType = String(editorState.traceType || procedureRoutePreview?.traceType || "").toUpperCase();
   const routeIds = routePointIds(input);
+  const gate = initialDisplayClimb(input);
+  const gateId = gate?.gateId || null;
   const startId = editorState.startId || editorState.anchorFrame?.startId || null;
   const finalId = editorState.finalId || editorState.anchorFrame?.finalId || null;
   const firstRouteFix = routeFixes[0] || null;
@@ -282,14 +454,28 @@ function checkRoute(checks, input) {
     const approximateSegments = procedureRoutePreview?.approximateSegments || [];
     addCheck(checks, "Route", approximateSegments.length ? "error" : "ok", "RNAV_NO_APPROX_ARC", approximateSegments.length ? "RNAV route produced approximate curved segments." : "RNAV route has no approximate curved geometry.", { approximateSegmentCount: approximateSegments.length });
     addCheck(checks, "Route", traceType.includes("SOLID") || procedureRoutePreview?.traceType === "route-solid" ? "ok" : "error", "RNAV_SOLID_ROUTE", traceType.includes("SOLID") || procedureRoutePreview?.traceType === "route-solid" ? "RNAV display route is solid." : "RNAV display route is not marked route-solid.", { traceType: editorState.traceType, previewTraceType: procedureRoutePreview?.traceType });
+    const startConnectorOk = startId && firstRouteFix && (
+      (routeIds[0] === startId && routeIds[1] === firstRouteFix)
+      || (gateId && routeIds[0] === startId && routeIds[1] === gateId && routeIds[2] === firstRouteFix)
+    );
     addCheck(
       checks,
       "Route",
-      startId && firstRouteFix && routeIds[0] === startId && routeIds[1] === firstRouteFix ? "ok" : startId && routeIds.includes(startId) ? "warn" : "warn",
+      startConnectorOk ? "ok" : startId && routeIds.includes(startId) ? "warn" : "warn",
       "RNAV_START_CONNECTOR_PRESENT",
-      startId && firstRouteFix && routeIds[0] === startId && routeIds[1] === firstRouteFix ? "RNAV start connector precedes first route fix." : "RNAV start connector could not be confirmed in the route point sequence.",
-      { startId, firstRouteFix, routeIds: routeIds.slice(0, 6) },
+      startConnectorOk ? "RNAV start connector precedes first route fix." : "RNAV start connector could not be confirmed in the route point sequence.",
+      { startId, firstRouteFix, gateId, routeIds: routeIds.slice(0, 6) },
     );
+    if (gate) {
+      addCheck(
+        checks,
+        "Route",
+        gateId && routeIds.includes(gateId) ? "ok" : "warn",
+        "RNAV_INITIAL_HEADING_GATE_PRESENT",
+        gateId && routeIds.includes(gateId) ? "RNAV initial heading gate is present in display points." : "RNAV initial heading gate could not be confirmed in display points.",
+        { gateId, headingDeg: gate.headingDeg, atOrAboveFt: gate.atOrAboveFt, routeIds: routeIds.slice(0, 6) },
+      );
+    }
     addCheck(checks, "Route", routeIds.length >= 2 || routeFixes.length >= 2 ? "ok" : "error", "RNAV_ROUTE_HAS_MIN_POINTS", routeIds.length >= 2 || routeFixes.length >= 2 ? "RNAV route has at least two display points." : "RNAV route has fewer than two display points.", { pointCount: routeIds.length, routeFixCount: routeFixes.length });
   }
 }
@@ -320,7 +506,7 @@ function checkManualPreview(checks, input) {
 
   const anchorFrame = editorState.anchorFrame || manualPreview?.anchorFrame || {};
   const invalidAnchorValues = ["startId", "finalId", "axisToId"].filter((key) => anchorFrame[key] != null && typeof anchorFrame[key] !== "string");
-  addCheck(checks, "Manual Preview", invalidAnchorValues.length ? "error" : "ok", "MANUAL_PREVIEW_ANCHOR_FRAME_VALID", invalidAnchorValues.length ? `Invalid anchor frame fields: ${invalidAnchorValues.join(", ")}.` : "Manual preview anchor frame values are valid strings/null.", { anchorFrame });
+  addCheck(checks, "Manual Preview", invalidAnchorValues.length ? "error" : "ok", "MANUAL_PREVIEW_ANCHOR_FRAME_VALID", invalidAnchorValues.length ? `Invalid anchor frame fields: ${invalidAnchorValues.join(", ")}.` : "Manual preview anchor frame values are valid strings/null.", { anchorFrame, invalidAnchorValues });
 
   try {
     JSON.stringify(editorState.exportPayload || editorState);
@@ -396,32 +582,44 @@ export function runProcedureAuthoringQc(input = {}) {
   checkDisplaySafety(checks, input);
   checkMetadata(checks, input);
 
-  const summary = summarizeQcChecks(checks);
-  const status = getQcStatus(checks, input);
+  const localizedChecks = checks.map((check) => {
+    const messageZh = getQcCheckMessage(check);
+    return {
+      ...check,
+      originalMessage: check.message,
+      message: messageZh,
+      categoryLabel: getQcCategoryLabel(check.category),
+      levelLabel: getQcLevelLabel(check.level),
+      messageZh,
+    };
+  });
+  const summary = summarizeQcChecks(localizedChecks);
+  const status = getQcStatus(localizedChecks, input);
   return {
     presetId: input?.preset?.id || input?.editorState?.presetId || null,
     procedureId: input?.editorState?.procedureId || input?.preset?.procedureId || null,
     status,
+    statusLabel: getQcStatusLabel(status),
     summary,
-    checks,
+    checks: localizedChecks,
   };
 }
 
 export function formatQcReport(report) {
   const checksByLevel = (level) => (report?.checks || []).filter((check) => check.level === level);
   const lines = [
-    "RJCC Procedure Authoring QC Report",
-    `Preset: ${report?.presetId || "unknown"}`,
-    `Procedure: ${report?.procedureId || "unknown"}`,
-    `Status: ${report?.status || "UNKNOWN"}`,
-    `Summary: ${report?.summary?.ok || 0} OK / ${report?.summary?.warn || 0} WARN / ${report?.summary?.error || 0} ERROR`,
+    "RJCC 程序制作 QC 报告",
+    `预设：${report?.presetId || "未知"}`,
+    `程序：${report?.procedureId || "未知"}`,
+    `状态：${formatQcStatus(report?.status)}`,
+    `统计：${report?.summary?.ok || 0} 通过 / ${report?.summary?.warn || 0} 警告 / ${report?.summary?.error || 0} 错误`,
     "",
   ];
-  for (const [label, level] of [["ERROR", "error"], ["WARN", "warn"], ["OK", "ok"]]) {
+  for (const [label, level] of [["错误", "error"], ["警告", "warn"], ["通过", "ok"]]) {
     const checks = checksByLevel(level);
     if (!checks.length) continue;
     lines.push(`${label}:`);
-    checks.forEach((check) => lines.push(`- ${check.code}: ${check.message}`));
+    checks.forEach((check) => lines.push(`- ${check.code}: ${check.messageZh || getQcCheckMessage(check)}`));
     lines.push("");
   }
   return lines.join("\n").trim();
@@ -438,8 +636,8 @@ export function unresolvedFixesFromQc(report) {
 }
 
 export function formatExportReadinessSummary(report) {
-  if (!report) return "QC has not run.";
-  if (report.status === QC_STATUSES.ERROR) return `Export allowed, but QC has errors (${report.summary.error}).`;
-  if ((report.summary.warn || 0) > 0) return `Export allowed with warnings (${report.summary.warn}). QC status: ${report.status}.`;
-  return `Export-ready. QC status: ${report.status}.`;
+  if (!report) return "QC 尚未运行。";
+  if (report.status === QC_STATUSES.ERROR) return `允许导出，但 QC 有 ${report.summary.error} 个错误。`;
+  if ((report.summary.warn || 0) > 0) return `允许导出，有 ${report.summary.warn} 个警告。QC 状态：${formatQcStatus(report.status)}。`;
+  return `可导出。QC 状态：${formatQcStatus(report.status)}。`;
 }

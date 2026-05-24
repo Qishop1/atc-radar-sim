@@ -1,5 +1,7 @@
 import { manualProcedurePreviews } from "../../data/airspace/rjcc/manualProcedurePreviews.js";
 
+const EARTH_RADIUS_NM = 3440.065;
+
 function collectLegs(procedure) {
   const segmentLegs = (procedure?.segments || []).flatMap((segment) => segment.legs || []);
   const directLegs = procedure?.legs || [];
@@ -57,6 +59,49 @@ function speedConstraintText(speed) {
   return null;
 }
 
+function degreesToRadians(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+function radiansToDegrees(rad) {
+  return (rad * 180) / Math.PI;
+}
+
+function normalizeLon(lon) {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}
+
+function destinationPointFromHeading(start, headingDeg, distanceNm) {
+  if (!Number.isFinite(start?.lat) || !Number.isFinite(start?.lon)) return null;
+  if (!Number.isFinite(headingDeg) || !Number.isFinite(distanceNm) || distanceNm <= 0) return null;
+
+  const angularDistance = distanceNm / EARTH_RADIUS_NM;
+  const bearing = degreesToRadians(headingDeg);
+  const lat1 = degreesToRadians(start.lat);
+  const lon1 = degreesToRadians(start.lon);
+  const sinLat1 = Math.sin(lat1);
+  const cosLat1 = Math.cos(lat1);
+  const sinDistance = Math.sin(angularDistance);
+  const cosDistance = Math.cos(angularDistance);
+
+  const lat2 = Math.asin(
+    (sinLat1 * cosDistance) + (cosLat1 * sinDistance * Math.cos(bearing))
+  );
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(bearing) * sinDistance * cosLat1,
+    cosDistance - (sinLat1 * Math.sin(lat2))
+  );
+
+  return {
+    lat: radiansToDegrees(lat2),
+    lon: normalizeLon(radiansToDegrees(lon2)),
+  };
+}
+
+function formatHeadingLabel(headingDeg) {
+  return String(Math.round(headingDeg)).padStart(3, "0");
+}
+
 function endpointFixIdForLeg(leg) {
   return leg?.fixId || leg?.endpointFixId || leg?.toFixId || null;
 }
@@ -111,6 +156,12 @@ function startAnchorIdForProcedure(procedure) {
   return explicitStartAnchorId(procedure) || runwayStartAnchorId(procedure);
 }
 
+function initialDisplayClimbForProcedure(procedure) {
+  const climb = procedure?.initialDisplayClimb || procedure?.routeBuilder?.initialDisplayClimb || null;
+  if (Array.isArray(climb)) return climb.find((item) => item?.type === "RUNWAY_HEADING_TO_ALTITUDE_GATE") || null;
+  return climb;
+}
+
 function appendRnavStartAnchor(points, procedure, waypointLookup, warnings) {
   if (!isRnavProcedure(procedure)) return;
   const startAnchorId = startAnchorIdForProcedure(procedure);
@@ -135,6 +186,53 @@ function appendRnavStartAnchor(points, procedure, waypointLookup, warnings) {
     sourceLeg: null,
     displayOnly: true,
   });
+}
+
+function appendInitialDisplayClimbGate(points, procedure, waypointLookup, warnings, overrideClimb = null) {
+  if (!isRnavProcedure(procedure)) return null;
+  const climb = overrideClimb || initialDisplayClimbForProcedure(procedure);
+  if (!climb) return null;
+  if (climb.type !== "RUNWAY_HEADING_TO_ALTITUDE_GATE") {
+    warnings.push(`Initial display climb ${climb.type || "UNKNOWN"} is not supported by the route preview.`);
+    return null;
+  }
+
+  const startAnchorId = climb.startId || startAnchorIdForProcedure(procedure);
+  const startWaypoint = waypointLookup[startAnchorId];
+  if (!startWaypoint || !Number.isFinite(startWaypoint.lat) || !Number.isFinite(startWaypoint.lon)) {
+    warnings.push(`Initial display climb gate skipped: missing coordinate start anchor ${startAnchorId}.`);
+    return null;
+  }
+
+  const headingDeg = Number(climb.headingDeg);
+  const distanceNm = Number(climb.displayDistanceNm ?? climb.distanceNm ?? 1.2);
+  const gatePoint = destinationPointFromHeading(startWaypoint, headingDeg, distanceNm);
+  if (!gatePoint) {
+    warnings.push("Initial display climb gate skipped: heading or display distance is invalid.");
+    return null;
+  }
+
+  const atOrAboveFt = climb.atOrAboveFt ?? climb.altitude?.atOrAboveFt ?? null;
+  const gateId = climb.gateId || `${procedure?.id || "PROCEDURE"}_${atOrAboveFt || "ALT"}FT_GATE`;
+  appendPoint(points, {
+    id: gateId,
+    label: climb.label || `HDG${formatHeadingLabel(headingDeg)} / >=${atOrAboveFt || "ALT"}`,
+    lat: gatePoint.lat,
+    lon: gatePoint.lon,
+    role: climb.role || "runway-heading-gate",
+    altitudeConstraintText: altitudeConstraintText({ atOrAboveFt }),
+    speedConstraintText: null,
+    sourceLeg: {
+      ...climb,
+      displayOnly: true,
+    },
+    displayOnly: true,
+    headingDeg,
+    displayDistanceNm: distanceNm,
+    thenDirectToFixId: climb.thenDirectToFixId || null,
+  });
+
+  return gateId;
 }
 
 function runwayEndWaypoint(waypointLookup, airportId, runwayEndId) {
@@ -303,13 +401,19 @@ export function buildProcedureRoutePreview({ procedure, waypointLookup = {} } = 
   warnings.push(...approximateGeometry.warnings);
 
   appendRnavStartAnchor(points, procedure, waypointLookup, warnings);
+  appendInitialDisplayClimbGate(points, procedure, waypointLookup, warnings);
 
   for (const leg of collectLegs(procedure)) {
     const legType = leg?.type || "FIX";
     const fixId = endpointFixIdForLeg(leg);
 
+    if (legType === "RUNWAY_HEADING_TO_ALTITUDE_GATE") {
+      appendInitialDisplayClimbGate(points, procedure, waypointLookup, warnings, leg);
+      continue;
+    }
+
     if (legType === "HEADING_TO_FIX") {
-      warnings.push("HEADING_TO_FIX preview uses fix endpoint only; heading geometry is not drawn. Initial heading leg approximated as direct-to-fix preview.");
+      warnings.push("HEADING_TO_FIX preview uses fix endpoint only after any display-only initial heading gate.");
     }
 
     if (legType === "RUNWAY_HEADING") {

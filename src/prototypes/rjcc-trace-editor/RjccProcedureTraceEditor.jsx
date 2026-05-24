@@ -31,6 +31,7 @@ import { buildWaypointSnapTargets, filterWaypointSnapTargets, findWaypointSnapTa
 
 const SVG = { width: 1000, height: 930 };
 const FALLBACK_BOUNDS = { minLat: 41.0, maxLat: 45.8, minLon: 139.0, maxLon: 146.5 };
+const EARTH_RADIUS_NM = 3440.065;
 const DEFAULT_TRACE_ID = "KURIS_SEVEN_RWY19";
 const DEFAULT_NOTES = "Display-only traced preview; not authoritative navigation geometry.";
 const PROCEDURE_ID_PATTERN = /^[A-Z0-9_]+$/;
@@ -205,6 +206,63 @@ function formatNumber(value) {
   return Number.isFinite(value) ? Number(value.toFixed(6)) : null;
 }
 
+function degreesToRadians(deg) {
+  return (deg * Math.PI) / 180;
+}
+
+function radiansToDegrees(rad) {
+  return (rad * 180) / Math.PI;
+}
+
+function normalizeLon(lon) {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}
+
+function destinationPointFromHeading(start, headingDeg, distanceNm) {
+  if (!Number.isFinite(start?.lat) || !Number.isFinite(start?.lon)) return null;
+  if (!Number.isFinite(headingDeg) || !Number.isFinite(distanceNm) || distanceNm <= 0) return null;
+
+  const angularDistance = distanceNm / EARTH_RADIUS_NM;
+  const bearing = degreesToRadians(headingDeg);
+  const lat1 = degreesToRadians(start.lat);
+  const lon1 = degreesToRadians(start.lon);
+  const sinLat1 = Math.sin(lat1);
+  const cosLat1 = Math.cos(lat1);
+  const sinDistance = Math.sin(angularDistance);
+  const cosDistance = Math.cos(angularDistance);
+  const lat2 = Math.asin(
+    (sinLat1 * cosDistance) + (cosLat1 * sinDistance * Math.cos(bearing))
+  );
+  const lon2 = lon1 + Math.atan2(
+    Math.sin(bearing) * sinDistance * cosLat1,
+    cosDistance - (sinLat1 * Math.sin(lat2))
+  );
+
+  return {
+    lat: radiansToDegrees(lat2),
+    lon: normalizeLon(radiansToDegrees(lon2)),
+  };
+}
+
+function buildInitialDisplayClimbGateTarget({ climb, start, projection }) {
+  if (!climb || climb.type !== "RUNWAY_HEADING_TO_ALTITUDE_GATE") return null;
+  const headingDeg = Number(climb.headingDeg);
+  const distanceNm = Number(climb.displayDistanceNm ?? climb.distanceNm ?? 1.2);
+  const gateLatLon = destinationPointFromHeading(start, headingDeg, distanceNm);
+  if (!gateLatLon) return null;
+  const projected = projection.projectLatLon(gateLatLon.lat, gateLatLon.lon);
+  if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) return null;
+  return {
+    id: climb.gateId || `${climb.atOrAboveFt || "ALT"}FT_GATE`,
+    label: climb.label || `HDG${String(Math.round(headingDeg)).padStart(3, "0")} / >=${climb.atOrAboveFt || "ALT"}`,
+    role: climb.role || "runway-heading-gate",
+    lat: gateLatLon.lat,
+    lon: gateLatLon.lon,
+    x: projected.x,
+    y: projected.y,
+  };
+}
+
 function formatDraftTime(savedAt) {
   if (!savedAt) return "";
   const date = new Date(savedAt);
@@ -229,6 +287,9 @@ function makeTracePoint(point, projection, index, id) {
 
 function formatProjectedPoint(point) {
   return {
+    ...(point.id ? { id: point.id } : {}),
+    ...(point.label ? { label: point.label } : {}),
+    ...(point.role ? { role: point.role } : {}),
     x: round(point.x, 2),
     y: round(point.y, 2),
     ...(point.lat != null && point.lon != null ? { lat: point.lat, lon: point.lon } : {}),
@@ -324,7 +385,7 @@ async function copyTextToClipboard(text) {
   textarea.setSelectionRange(0, textarea.value.length);
   try {
     const copied = document.execCommand("copy");
-    if (!copied) throw clipboardError || new Error("copy command failed");
+    if (!copied) throw clipboardError || new Error("复制命令失败");
   } finally {
     document.body.removeChild(textarea);
   }
@@ -462,7 +523,7 @@ export default function RjccProcedureTraceEditor() {
   const [selectedWaypointSnapTargetId, setSelectedWaypointSnapTargetId] = useState("KURIS");
   const [snapMessage, setSnapMessage] = useState("");
   const [notes, setNotes] = useState(DEFAULT_NOTES);
-  const [draftStatus, setDraftStatus] = useState("No local draft");
+  const [draftStatus, setDraftStatus] = useState("无本地草稿");
   const [draftSavedAt, setDraftSavedAt] = useState(null);
   const [draftWarning, setDraftWarning] = useState("");
   const [qcCopyStatus, setQcCopyStatus] = useState("");
@@ -652,9 +713,10 @@ export default function RjccProcedureTraceEditor() {
     startId: startAnchorId || null,
     finalId: finalAnchorId || null,
     routeFixes,
+    initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || null,
     generatedTraceType: traceType === "SOLID_ROUTE" ? "route-solid" : null,
     unresolvedRouteFixes,
-  }), [finalAnchorId, routeFixes, startAnchorId, traceType, unresolvedRouteFixes]);
+  }), [finalAnchorId, routeFixes, selectedManualPreset, startAnchorId, traceType, unresolvedRouteFixes]);
   const exportPayload = useMemo(
     () => buildExportPayload({
       traceId,
@@ -727,6 +789,7 @@ export default function RjccProcedureTraceEditor() {
     startId: startAnchorId || null,
     finalId: finalAnchorId || null,
     routeFixes,
+    initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || null,
     navSpec: routeFixes.length ? "RNAV1" : selectedManualPreset?.navSpec || null,
     displayOnly: true,
     guidanceEnabled: false,
@@ -737,7 +800,7 @@ export default function RjccProcedureTraceEditor() {
     ...(!startAnchorId ? ["Start anchor is missing."] : []),
     ...(!finalAnchorId ? ["Final/endpoint anchor is missing."] : []),
     ...(!tracePoints.length && !routeFixes.length ? ["Route has zero trace points and zero routeFixes."] : []),
-    ...unresolvedRouteFixes.map((id) => `Route fix ${id} is unresolved.`),
+    ...unresolvedRouteFixes.map((id) => `Route fix ${id} 未解析。`),
   ], [exportChartId, exportProcedureId, finalAnchorId, routeFixes.length, selectedManualPreset, startAnchorId, tracePoints.length, unresolvedRouteFixes]);
   const draftSnapshot = useMemo(() => ({
     version: 1,
@@ -764,6 +827,7 @@ export default function RjccProcedureTraceEditor() {
       finalId: finalAnchorId,
     },
     routeFixes,
+    initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || null,
     traceType,
     segmentType: traceType,
     points: tracePoints,
@@ -775,6 +839,7 @@ export default function RjccProcedureTraceEditor() {
       startId: startAnchorId || null,
       finalId: finalAnchorId || null,
       routeFixes,
+      initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || null,
       points: tracePoints,
     } : null,
     editorState: {
@@ -880,6 +945,7 @@ export default function RjccProcedureTraceEditor() {
     startId: startAnchorId || qcProcedureEntry?.startId || qcProcedureEntry?.startAnchorId || null,
     startAnchorId: startAnchorId || qcProcedureEntry?.startAnchorId || qcProcedureEntry?.startId || null,
     routeFixes: routeFixes.length ? routeFixes : qcProcedureEntry?.routeFixes || [],
+    initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || qcProcedureEntry?.initialDisplayClimb || qcProcedureEntry?.routeBuilder?.initialDisplayClimb || null,
     segments: routeFixes.length ? [] : qcProcedureEntry?.segments || [],
     legs: routeFixes.length ? [] : qcProcedureEntry?.legs || [],
   }), [exportProcedureId, qcNavSpec, qcProcedureEntry, qcRunwayIds, routeFixes, selectedManualPreset, startAnchorId]);
@@ -901,6 +967,7 @@ export default function RjccProcedureTraceEditor() {
       source: selectedManualPreset?.source || qcProcedureEntry?.source || exportPayload.source,
       airac_cycle: selectedManualPreset?.airac_cycle ?? qcProcedureEntry?.airac_cycle ?? null,
       routeFixes,
+      initialDisplayClimb: selectedManualPreset?.initialDisplayClimb || qcProcedureEntry?.initialDisplayClimb || qcProcedureEntry?.routeBuilder?.initialDisplayClimb || null,
       startId: startAnchorId || null,
       finalId: finalAnchorId || null,
       axisToId: axisTargetAnchorId || null,
@@ -994,14 +1061,14 @@ export default function RjccProcedureTraceEditor() {
   const resetOverlay = () => setOverlayTransform(DEFAULT_OVERLAY_TRANSFORM);
   const resetView = () => setView(fullView);
   const runQcNow = () => {
-    setQcCopyStatus(`QC refreshed ${formatDraftTime(new Date().toISOString())}`);
+    setQcCopyStatus(`QC 已刷新 ${formatDraftTime(new Date().toISOString())}`);
   };
   const copyQcText = async (label, text) => {
     try {
       await copyTextToClipboard(text || "");
-      setQcCopyStatus(`${label} copied`);
+      setQcCopyStatus(`${label}已复制`);
     } catch (error) {
-      setQcCopyStatus(`Copy failed: ${error instanceof Error ? error.message : "clipboard unavailable"}`);
+      setQcCopyStatus(`复制失败：${error instanceof Error ? error.message : "剪贴板不可用"}`);
     }
   };
   const applyResolvedSetup = (setup) => {
@@ -1029,7 +1096,7 @@ export default function RjccProcedureTraceEditor() {
     if (!saved) return null;
     saveLastDraftPresetId(draftPresetId);
     setDraftSavedAt(saved.savedAt);
-    setDraftStatus(`${silent ? "Autosaved" : "Saved draft"} ${formatDraftTime(saved.savedAt)}`);
+      setDraftStatus(`${silent ? "已自动保存" : "已保存草稿"} ${formatDraftTime(saved.savedAt)}`);
     setDraftWarning("");
     return saved;
   };
@@ -1127,7 +1194,7 @@ export default function RjccProcedureTraceEditor() {
     setSelectedWaypointSnapTargetId(editorState.selectedWaypointSnapTargetId || "KURIS");
     setSelectedPointId(editorState.selectedPointId || null);
     setAutoSetupWarnings([]);
-    setAutoSetupStatus("Draft restored from local storage");
+    setAutoSetupStatus("已从本地存储恢复草稿");
   };
   const handleAutoDeriveSetup = () => {
     const result = deriveProcedureTraceSetup({
@@ -1180,13 +1247,13 @@ export default function RjccProcedureTraceEditor() {
     if (draft) {
       restoreDraftToEditor(draft);
       setDraftSavedAt(draft.savedAt || null);
-      setDraftStatus(`Draft restored${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
+      setDraftStatus(`已恢复草稿${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
       setDraftWarning("");
       return;
     }
     applyPristinePreset(preset);
     setDraftSavedAt(null);
-    setDraftStatus(error ? "Draft ignored; preset loaded" : "No local draft; preset loaded");
+    setDraftStatus(error ? "已忽略草稿；已载入预设" : "无本地草稿；已载入预设");
     setDraftWarning(error || "");
   };
   const handleManualPresetChange = (nextPresetId) => {
@@ -1196,7 +1263,7 @@ export default function RjccProcedureTraceEditor() {
     saveLastDraftPresetId(nextPresetId);
     setDraftSavedAt(null);
     setDraftWarning("");
-    setDraftStatus(hasDraft(nextPresetId) ? "Local draft available; apply preset to restore" : "No local draft");
+    setDraftStatus(hasDraft(nextPresetId) ? "有可用本地草稿；应用预设即可恢复" : "无本地草稿");
   };
   const resetCurrentPresetToPreset = () => {
     if (!selectedManualPreset) return;
@@ -1205,7 +1272,7 @@ export default function RjccProcedureTraceEditor() {
     applyPristinePreset(selectedManualPreset);
     setDraftSavedAt(null);
     setDraftWarning("");
-    setDraftStatus("Draft cleared; preset restored");
+    setDraftStatus("已清除草稿；已恢复预设");
   };
   const exportCurrentDraft = () => {
     saveCurrentDraftNow();
@@ -1219,12 +1286,12 @@ export default function RjccProcedureTraceEditor() {
     if (draft) {
       restoreDraftToEditor(draft);
       setDraftSavedAt(draft.savedAt || null);
-      setDraftStatus(`Draft restored${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
+      setDraftStatus(`已恢复草稿${draft.savedAt ? ` ${formatDraftTime(draft.savedAt)}` : ""}`);
       setDraftWarning("");
     } else {
       if (initialPresetId !== manualPresetId) setManualPresetId(initialPresetId);
       setDraftSavedAt(null);
-      setDraftStatus(error ? "Draft ignored" : "No local draft");
+      setDraftStatus(error ? "已忽略草稿" : "无本地草稿");
       setDraftWarning(error || "");
     }
     draftStorageReadyRef.current = true;
@@ -1236,12 +1303,12 @@ export default function RjccProcedureTraceEditor() {
       skipNextDraftAutosaveRef.current = false;
       return undefined;
     }
-    setDraftStatus("Unsaved local draft");
+    setDraftStatus("本地草稿未保存");
     draftAutosaveTimerRef.current = window.setTimeout(() => {
       const saved = saveDraft(draftPresetId, draftSnapshot);
       if (!saved) return;
       setDraftSavedAt(saved.savedAt);
-      setDraftStatus(`Autosaved ${formatDraftTime(saved.savedAt)}`);
+      setDraftStatus(`已自动保存 ${formatDraftTime(saved.savedAt)}`);
       setDraftWarning("");
     }, 700);
     return () => window.clearTimeout(draftAutosaveTimerRef.current);
@@ -1540,7 +1607,7 @@ export default function RjccProcedureTraceEditor() {
       return;
     }
     setRouteFixes((prev) => [...prev, selectedWaypointSnapTarget.id]);
-    setSnapMessage(`Route Builder 已加入 ${selectedWaypointSnapTarget.id}`);
+    setSnapMessage(`路线构建器已加入 ${selectedWaypointSnapTarget.id}`);
   };
   const removeRouteFixAt = (indexToRemove) => {
     setRouteFixes((prev) => prev.filter((_, index) => index !== indexToRemove));
@@ -1555,8 +1622,14 @@ export default function RjccProcedureTraceEditor() {
     });
   };
   const generateRouteDisplayPath = () => {
+    const initialGate = buildInitialDisplayClimbGateTarget({
+      climb: selectedManualPreset?.initialDisplayClimb,
+      start: anchorConfig.start,
+      projection: chartData.projection,
+    });
     const routePoints = [
       ...(anchorConfig.start ? [{ ...anchorConfig.start, id: startAnchorId }] : []),
+      ...(initialGate ? [initialGate] : []),
       ...routeFixTargets.map((target) => ({ ...target, id: target.id })),
       ...(anchorConfig.final && finalAnchorId !== routeFixTargets.at(-1)?.id ? [{ ...anchorConfig.final, id: finalAnchorId }] : []),
     ].filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
@@ -1565,12 +1638,14 @@ export default function RjccProcedureTraceEditor() {
     setTraceType("SOLID_ROUTE");
     setTracePoints(deduped.map((point, index) => ({
       id: point.id || `R${index + 1}`,
+      label: point.label || null,
+      role: point.role || null,
       x: Number(point.x.toFixed(2)),
       y: Number(point.y.toFixed(2)),
       lat: formatNumber(point.lat),
       lon: formatNumber(point.lon),
     })));
-    setSnapMessage(deduped.length >= 2 ? `Route Builder generated ${deduped.length} display points.` : "Route Builder needs at least two resolved points.");
+    setSnapMessage(deduped.length >= 2 ? `路线构建器已生成 ${deduped.length} 个显示点。` : "路线构建器至少需要两个已解析点。");
   };
   const snapPointToWaypointTarget = (mode) => {
     if (!selectedWaypointSnapTarget) {
@@ -1767,20 +1842,20 @@ export default function RjccProcedureTraceEditor() {
           </div>
           <div style={{ display: "grid", gap: 4, marginBottom: 5, padding: 6, border: "1px solid rgba(95,168,179,.22)", background: "rgba(3,18,22,.24)" }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, color: "#9ed7df", fontSize: 10 }}>
-              <strong style={{ color: "#d8fbff" }}>Draft</strong>
+              <strong style={{ color: "#d8fbff" }}>草稿</strong>
               <span>{draftStatus}</span>
               {draftSavedAt && <span>{formatDraftTime(draftSavedAt)}</span>}
               {draftWarning && <span style={{ color: "#ffcf86" }}>{draftWarning}</span>}
             </div>
             <div style={rowStyle}>
-              <button type="button" onClick={() => saveCurrentDraftNow()} style={buttonStyle}>Save Draft</button>
-              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>Clear Draft</button>
-              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>Reset to Preset</button>
-              <button type="button" onClick={exportCurrentDraft} disabled={!validProcedureId(traceId)} style={buttonStyle}>Export Current Draft</button>
+              <button type="button" onClick={() => saveCurrentDraftNow()} style={buttonStyle}>保存草稿</button>
+              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>清除草稿</button>
+              <button type="button" onClick={resetCurrentPresetToPreset} disabled={!selectedManualPreset} style={buttonStyle}>恢复预设</button>
+              <button type="button" onClick={exportCurrentDraft} disabled={!validProcedureId(traceId)} style={buttonStyle}>导出当前草稿</button>
             </div>
           </div>
           <div style={rowStyle}>
-            <span>Procedure ID</span>
+            <span>程序 ID</span>
             <input
               value={traceId}
               onChange={(event) => setTraceId(event.target.value.toUpperCase())}
@@ -2050,40 +2125,40 @@ export default function RjccProcedureTraceEditor() {
             <button type="button" onClick={() => snapPointToWaypointTarget("selected")} style={buttonStyle}>选中点吸附到航点</button>
             <button type="button" onClick={() => snapPointToWaypointTarget("first")} style={buttonStyle}>首点吸附到航点</button>
             <button type="button" onClick={() => snapPointToWaypointTarget("last")} style={buttonStyle}>末点吸附到航点</button>
-            <button type="button" onClick={setStartAnchorFromWaypointTarget} style={buttonStyle}>Set start</button>
-            <button type="button" onClick={setFinalAnchorFromWaypointTarget} style={buttonStyle}>Set final</button>
+            <button type="button" onClick={setStartAnchorFromWaypointTarget} style={buttonStyle}>设为起点</button>
+            <button type="button" onClick={setFinalAnchorFromWaypointTarget} style={buttonStyle}>设为终点</button>
           </div>
           {snapMessage && <div style={{ color: "#d8fbff", fontSize: 10 }}>{snapMessage}</div>}
         </details>
         <details open style={sectionStyle}>
-          <summary style={summaryStyle}>Route Builder</summary>
+          <summary style={summaryStyle}>路线构建器</summary>
           <div style={{ color: "#7fc6cf", fontSize: 10, lineHeight: 1.35, marginBottom: 5 }}>
-            RNAV display routes are built from waypoint coordinates; chart images are reference only.
+            RNAV 显示路线由航点坐标生成；航图图片仅作参考。
           </div>
           <div style={rowStyle}>
-            <button type="button" onClick={addSelectedSnapTargetToRoute} style={buttonStyle}>Add selected</button>
-            <button type="button" onClick={generateRouteDisplayPath} style={buttonStyle}>Generate display route</button>
-            <button type="button" onClick={() => setRouteFixes([])} style={buttonStyle}>Clear route</button>
-            <span style={{ color: "#5fa8b3", fontSize: 10 }}>{routeFixes.length} routeFixes</span>
+            <button type="button" onClick={addSelectedSnapTargetToRoute} style={buttonStyle}>添加选中点</button>
+            <button type="button" onClick={generateRouteDisplayPath} style={buttonStyle}>生成显示路线</button>
+            <button type="button" onClick={() => setRouteFixes([])} style={buttonStyle}>清空路线</button>
+            <span style={{ color: "#5fa8b3", fontSize: 10 }}>{routeFixes.length} 个 routeFix</span>
           </div>
           <div style={{ display: "grid", gap: 4, maxHeight: 150, overflowY: "auto" }}>
-            {routeFixes.length === 0 && <div style={{ color: "#5fa8b3", fontSize: 11 }}>No routeFixes yet. Search a waypoint, then add selected.</div>}
+            {routeFixes.length === 0 && <div style={{ color: "#5fa8b3", fontSize: 11 }}>还没有 routeFixes。先搜索航点，再添加选中点。</div>}
             {routeFixes.map((fixId, index) => {
               const target = findWaypointSnapTargetById(fixId, waypointSnapTargets);
               return (
                 <div key={`${fixId}-${index}`} style={{ display: "grid", gridTemplateColumns: "26px 1fr auto auto auto", gap: 4, alignItems: "center", border: "1px solid rgba(95,168,179,.18)", padding: "3px 4px" }}>
                   <span>{index + 1}</span>
-                  <span style={{ color: target ? "#d8fbff" : "#ffcf86" }}>{fixId}{target?.type ? ` / ${target.type}` : " / unresolved"}</span>
-                  <button type="button" onClick={() => moveRouteFix(index, -1)} style={buttonStyle}>Up</button>
-                  <button type="button" onClick={() => moveRouteFix(index, 1)} style={buttonStyle}>Down</button>
-                  <button type="button" onClick={() => removeRouteFixAt(index)} style={buttonStyle}>Remove</button>
+                  <span style={{ color: target ? "#d8fbff" : "#ffcf86" }}>{fixId}{target?.type ? ` / ${target.type}` : " / 未解析"}</span>
+                  <button type="button" onClick={() => moveRouteFix(index, -1)} style={buttonStyle}>上移</button>
+                  <button type="button" onClick={() => moveRouteFix(index, 1)} style={buttonStyle}>下移</button>
+                  <button type="button" onClick={() => removeRouteFixAt(index)} style={buttonStyle}>删除</button>
                 </div>
               );
             })}
           </div>
         </details>
         <details open style={sectionStyle}>
-          <summary style={summaryStyle}>QC / QA</summary>
+          <summary style={summaryStyle}>QC / QA 检查</summary>
           <div style={{ display: "grid", gap: 5 }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
               <span style={{
@@ -2091,28 +2166,28 @@ export default function RjccProcedureTraceEditor() {
                 border: "1px solid rgba(95,168,179,.35)",
                 padding: "2px 6px",
                 fontWeight: 900,
-              }}>{qcReport.status}</span>
-              <span style={{ color: "#d8fbff", fontSize: 10 }}>{qcReport.summary.ok} OK</span>
-              <span style={{ color: "#ffcf86", fontSize: 10 }}>{qcReport.summary.warn} WARN</span>
-              <span style={{ color: "#ffb7a8", fontSize: 10 }}>{qcReport.summary.error} ERROR</span>
+              }}>{qcReport.statusLabel || qcReport.status}</span>
+              <span style={{ color: "#d8fbff", fontSize: 10 }}>{qcReport.summary.ok} 通过</span>
+              <span style={{ color: "#ffcf86", fontSize: 10 }}>{qcReport.summary.warn} 警告</span>
+              <span style={{ color: "#ffb7a8", fontSize: 10 }}>{qcReport.summary.error} 错误</span>
             </div>
             <div style={rowStyle}>
-              <button type="button" onClick={runQcNow} style={buttonStyle}>Run QC</button>
-              <button type="button" onClick={() => copyQcText("QC report", qcReportText)} style={buttonStyle}>Copy QC Report</button>
-              <button type="button" onClick={() => copyQcText("QC JSON", qcJsonText)} style={buttonStyle}>Copy QC JSON</button>
-              <button type="button" onClick={() => copyQcText("Unresolved fixes", qcUnresolvedFixesText || "No unresolved route fixes.")} style={buttonStyle}>Copy unresolved fixes only</button>
-              <button type="button" onClick={() => copyQcText("Readiness summary", qcReadinessSummary)} style={buttonStyle}>Copy export readiness summary</button>
+              <button type="button" onClick={runQcNow} style={buttonStyle}>运行 QC</button>
+              <button type="button" onClick={() => copyQcText("QC 报告", qcReportText)} style={buttonStyle}>复制 QC 报告</button>
+              <button type="button" onClick={() => copyQcText("QC JSON", qcJsonText)} style={buttonStyle}>复制 QC JSON</button>
+              <button type="button" onClick={() => copyQcText("未解析 fix 列表", qcUnresolvedFixesText || "没有未解析 routeFix。")} style={buttonStyle}>只复制未解析 fix</button>
+              <button type="button" onClick={() => copyQcText("导出就绪摘要", qcReadinessSummary)} style={buttonStyle}>复制导出就绪摘要</button>
             </div>
             <div style={{ color: qcReport.status === "ERROR" ? "#ffb7a8" : "#9ed7df", fontSize: 10 }}>{qcReadinessSummary}</div>
             {qcCopyStatus && <div style={{ color: "#d8fbff", fontSize: 10 }}>{qcCopyStatus}</div>}
             <div style={{ display: "grid", gap: 5, maxHeight: 300, overflowY: "auto" }}>
               {Object.entries(qcChecksByCategory).map(([category, checks]) => (
                 <div key={category} style={{ border: "1px solid rgba(95,168,179,.16)", padding: 5 }}>
-                  <div style={{ color: "#d8fbff", fontWeight: 900, marginBottom: 3 }}>{category}</div>
+                  <div style={{ color: "#d8fbff", fontWeight: 900, marginBottom: 3 }}>{checks[0]?.categoryLabel || category}</div>
                   <div style={{ display: "grid", gap: 3 }}>
                     {checks.map((check) => (
                       <div key={`${check.category}-${check.code}-${check.message}`} style={{ color: check.level === "error" ? "#ffb7a8" : check.level === "warn" ? "#ffcf86" : "#8fcbd4", fontSize: 10, lineHeight: 1.25 }}>
-                        [{check.level.toUpperCase()}] {check.code} - {check.message}
+                        [{check.levelLabel || check.level.toUpperCase()}] {check.code} - {check.messageZh || check.message}
                       </div>
                     ))}
                   </div>
@@ -2143,7 +2218,7 @@ export default function RjccProcedureTraceEditor() {
             <button type="button" onClick={downloadChartOverlayJs} disabled={!validProcedureId(traceId)} style={buttonStyle}>下载航图叠加JS</button>
           </div>
           <div style={{ color: qcReport.status === "ERROR" ? "#ffb7a8" : qcReport.summary.warn ? "#ffcf86" : "#9ed7df", fontSize: 10, lineHeight: 1.35 }}>
-            QC {qcReport.status}: {qcReadinessSummary}
+            QC {qcReport.statusLabel || qcReport.status} ({qcReport.status}): {qcReadinessSummary}
           </div>
           <div style={{ color: "#7fc6cf", fontSize: 10, lineHeight: 1.35 }}>
             下载后，把航路JS放入 src/data/airspace/rjcc/manual-previews/；把航图叠加JS放入 src/data/airspace/rjcc/chart-overlays/。刷新后会自动注册，不需要手动编辑 index.js。
@@ -2158,7 +2233,7 @@ export default function RjccProcedureTraceEditor() {
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
             稳定ID
-            <input readOnly value={`preset ${selectedManualPreset?.id || "CUSTOM"} / procedure ${exportProcedureId} / chart ${exportChartId}`} style={inputStyle} />
+            <input readOnly value={`预设 ${selectedManualPreset?.id || "CUSTOM"} / 程序 ${exportProcedureId} / 航图 ${exportChartId}`} style={inputStyle} />
           </label>
           <label style={{ display: "grid", gap: 2, fontSize: 10 }}>
             可选 procedures patch JSON

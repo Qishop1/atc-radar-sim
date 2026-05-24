@@ -394,7 +394,7 @@ export const ProcedureRouteLayer = memo(function ProcedureRouteLayer({
         <g id="procedure-marker-layer" fill="#071c20" stroke={stroke} strokeWidth="0.8" vectorEffect="non-scaling-stroke">
           {visibleRoutePoints.map((point) => (
             <circle key={routePointKey(point)} cx={point.x} cy={point.y} r={markerRadius} vectorEffect="non-scaling-stroke">
-              {detailMode !== "path" && <title>{[point.id, ...point.routeIds].filter(Boolean).join("\n")}</title>}
+              {detailMode !== "path" && <title>{[point.label || point.id, ...point.routeIds].filter(Boolean).join("\n")}</title>}
             </circle>
           ))}
         </g>
@@ -402,7 +402,7 @@ export const ProcedureRouteLayer = memo(function ProcedureRouteLayer({
       {showText && (
         <g id="procedure-label-layer" stroke="none">
           {labelPoints.map((point) => (
-            <text key={routePointKey(point)} x={point.x + 5 * s} y={point.y - 5 * s} style={pointLabelStyle}>{point.id}</text>
+            <text key={routePointKey(point)} x={point.x + 5 * s} y={point.y - 5 * s} style={pointLabelStyle}>{point.label || point.id}</text>
           ))}
         </g>
       )}
